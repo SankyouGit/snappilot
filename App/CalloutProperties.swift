@@ -84,6 +84,12 @@ struct CalloutProperties: View {
                 slider(model.calloutAppearance.shape == .blockArrow ? "Arrowhead size" : "Tail size", value: $model.calloutAppearance.pointerScale, range: 0.5...2)
             }
             if model.calloutAppearance.shape == .blockArrow {
+                slider("Shaft thickness", value: Binding(
+                    get: { model.calloutAppearance.blockArrowShaftScale ?? 1 },
+                    set: { model.calloutAppearance.blockArrowShaftScale = $0 }), range: 0.35...2)
+                slider("Bend", value: Binding(
+                    get: { model.calloutAppearance.blockArrowBend ?? 0.12 },
+                    set: { model.calloutAppearance.blockArrowBend = $0 }), range: -1...1)
                 Text("Drag yellow handles for thickness and head size. Drag the blue handle to bend.")
                     .font(.caption2).foregroundStyle(.secondary)
             }

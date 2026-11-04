@@ -135,10 +135,28 @@ public struct Annotation: Identifiable, Equatable, Sendable, Codable {
     }
 
     public mutating func transform(_ map: (CGPoint) -> CGPoint) {
-        let origin = CGPoint.zero, x = CGPoint(x: 1, y: 0), y = CGPoint(x: 0, y: 1)
-        let o = map(origin), a = map(x), b = map(y)
-        if (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x) < 0,
-           let rotation = calloutAppearance?.rotationDegrees { calloutAppearance?.rotationDegrees = -rotation }
+        if isModernCallout {
+            let r = selectionRect(from: start, to: end), center = CGPoint(x: r.midX, y: r.midY)
+            let mapped = map(center)
+            let x = map(CGPoint(x: center.x + 1, y: center.y)), y = map(CGPoint(x: center.x, y: center.y + 1))
+            let ax = x.x - mapped.x, ay = x.y - mapped.y, bx = y.x - mapped.x, by = y.y - mapped.y
+            let sx = hypot(ax, ay), sy = hypot(bx, by), sign: CGFloat = ax * by - ay * bx < 0 ? -1 : 1
+            var appearance = resolvedCalloutAppearance
+            appearance.rotationDegrees = (appearance.rotationDegrees ?? 0) * Double(sign) + Double(atan2(ay, ax) * 180 / .pi)
+            calloutAppearance = appearance.normalized()
+            func target(_ p: CGPoint) -> CGPoint {
+                CGPoint(x: mapped.x + (p.x - center.x) * sx, y: mapped.y + (p.y - center.y) * sy * sign)
+            }
+            pointerTip = pointerTip.map(target)
+            additionalPointerTips = additionalPointerTips?.map(target)
+            start = CGPoint(x: mapped.x - r.width * sx / 2, y: mapped.y - r.height * sy / 2)
+            end = CGPoint(x: mapped.x + r.width * sx / 2, y: mapped.y + r.height * sy / 2)
+            points = points.map(map)
+            return
+        }
+        if tool == .step && stepAppearance != nil && resolvedStepAppearance.shape == .pin && pointerTip == nil {
+            pointerTip = StepGeometry.tip(self)
+        }
         pointerTip = pointerTip.map(map)
         additionalPointerTips = additionalPointerTips?.map(map)
         start = map(start); end = map(end)

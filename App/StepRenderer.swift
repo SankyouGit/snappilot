@@ -16,13 +16,15 @@ enum StepRenderer {
         context.setLineWidth(style.shape == .ring ? max(2, style.borderWidth) : style.borderWidth)
         context.setLineJoin(.round)
         if style.shape == .ring || style.borderWidth > 0 { context.addPath(path); context.strokePath() }
-        let initial = style.fontFamily == "System" ? NSFont.systemFont(ofSize: style.fontSize, weight: .bold) : (NSFont(name: style.fontFamily, size: style.fontSize) ?? NSFont.boldSystemFont(ofSize: style.fontSize))
+        let weight: NSFont.Weight = (style.bold ?? true) ? .bold : .regular
+        let baseFont = style.fontFamily == "System" ? NSFont.systemFont(ofSize: style.fontSize, weight: weight) : (NSFont(name: style.fontFamily, size: style.fontSize) ?? NSFont.systemFont(ofSize: style.fontSize, weight: weight))
+        let initial = (style.bold ?? true) ? NSFontManager.shared.convert(baseFont, toHaveTrait: .boldFontMask) : baseFont
         let label = a.stepLabel as NSString
         let measured = label.size(withAttributes: [.font: initial])
         let available = max(8, rect.width - CGFloat(style.padding * 2 + style.borderWidth))
         let scale = min(1, min(available / max(1, measured.width), available / max(1, measured.height)))
         let font = NSFont(descriptor: initial.fontDescriptor, size: max(8, initial.pointSize * scale)) ?? initial
-        let color = style.textColorHex.map(nsColor(fromHex:)) ?? (style.shape == .ring ? nsColor(fromHex: a.colorHex) : .white)
+        let color = style.textColorHex.map { nsColor(fromHex: $0) } ?? (style.shape == .ring ? nsColor(fromHex: a.colorHex) : .white)
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let size = label.size(withAttributes: attributes)
         NSGraphicsContext.saveGraphicsState()

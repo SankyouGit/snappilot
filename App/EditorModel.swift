@@ -141,8 +141,34 @@ final class EditorModel: ObservableObject {
                         endHead: endHead, arrowSize: arrowSize, redactStyle: redactStyle, calloutAppearance: styleTool == .callout ? calloutAppearance : nil, stepAppearance: styleTool == .step ? stepAppearance : nil, simplifyCornerRadius: (selectedID.flatMap { id in doc.items.first { $0.id == id }?.simplifyCornerRadius }) == nil ? nil : simplifyCornerRadius)
     }
 
+    /// Apply a saved recipe as one document transaction, including tool-specific data.
+    func applyStoredStyle(_ style: AnnotationStyle) {
+        finishTextEditing()
+        if let id = selectedID, let source = doc.items.first(where: { $0.id == id }) {
+            let styled = style.applied(to: source)
+            if styled != source {
+                snapshot()
+                doc.update(id: id) { $0 = styled.isModernCallout ? CalloutTextLayout.fitted(styled) : styled }
+            }
+        }
+        isSyncingStyle = true
+        colorHex = style.colorHex; thickness = style.thickness; filled = style.filled; opacity = style.opacity
+        stepStyle = style.stepStyle; lineStyle = style.lineStyle; startHead = style.startHead
+        endHead = style.endHead; arrowSize = style.arrowSize
+        if let appearance = style.calloutAppearance { calloutAppearance = appearance }
+        if let appearance = style.stepAppearance { stepAppearance = appearance }
+        let styleTool = selectedID.flatMap { id in doc.items.first { $0.id == id }?.tool } ?? tool
+        if styleTool == .blur, let redaction = style.redactStyle { redactStyle = redaction }
+        if let radius = style.simplifyCornerRadius { simplifyCornerRadius = radius }
+        isSyncingStyle = false
+        restyledSelectionID = nil
+        if let appearance = style.calloutAppearance { CalloutAppearancePreferences.save(appearance) }
+        if let appearance = style.stepAppearance { StepAppearancePreferences.save(appearance) }
+    }
+
     func applyCalloutPreset(color: String, appearance: CalloutAppearance) {
         finishTextEditing()
+        restyledSelectionID = nil
         isSyncingStyle = true
         colorHex = color
         opacity = 1

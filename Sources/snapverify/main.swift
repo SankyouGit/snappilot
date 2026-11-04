@@ -1121,7 +1121,7 @@ check(markers.items[0].stepLabel == "Start" && markers.items[0].stepNumber == 2,
 check(StepStyle.upper.label(for: 27) == "AA", "alphabetic markers continue beyond Z")
 if let solid = renderSolid(width: 80, height: 60) {
     let sampled = SimplifySampling.surroundingColorHex(solid, region: CGRect(x: 20, y: 20, width: 20, height: 20))
-    check(sampled.hasPrefix("#") && sampled.count == 7, "Simplify background sample returns a stored RGB color")
+    check(sampled == "#3366CC", "Simplify samples the surrounding image color accurately")
 }
 var extendedDoc = AnnotationDocument()
 let extended = extendedDoc.add(.callout, start: multi.start, end: multi.end, text: "Two targets")
@@ -1137,6 +1137,48 @@ do {
     check(defaults.data(forKey: "pref.stepAppearance") != nil, "step preferences use supported Data storage")
     defaults.removeObject(forKey: "pref.stepAppearance")
 } catch { check(false, "expanded annotations round trip: \(error)") }
+
+// MARK: Image rotation/flip preserve callout dimensions and visible targets
+var transformStyle = CalloutAppearance(); transformStyle.shape = .bubble; transformStyle.rotationDegrees = 25
+let transformSource = Annotation(id: 600, tool: .callout, start: CGPoint(x: 100, y: 100), end: CGPoint(x: 320, y: 180),
+    pointerTip: CGPoint(x: 400, y: 130), calloutAppearance: transformStyle, additionalPointerTips: [CGPoint(x: 180, y: 280)])
+let visibleTarget = CalloutGeometry.rotate(transformSource.pointerTip!, on: transformSource)
+var rotatedImageObject = transformSource
+rotatedImageObject.transform { CGPoint(x: 600 - $0.y, y: $0.x) }
+let quarterTurnTarget = CalloutGeometry.rotate(rotatedImageObject.pointerTip!, on: rotatedImageObject)
+check(hypot(quarterTurnTarget.x - (600 - visibleTarget.y), quarterTurnTarget.y - visibleTarget.x) < 0.0001,
+      "image quarter-turn preserves rotated callout target")
+check(CalloutGeometry.body(rotatedImageObject).size == CalloutGeometry.body(transformSource).size,
+      "quarter-turn preserves local callout aspect ratio")
+var flippedImageObject = transformSource
+flippedImageObject.transform { CGPoint(x: 800 - $0.x, y: $0.y) }
+let flipTarget = CalloutGeometry.rotate(flippedImageObject.pointerTip!, on: flippedImageObject)
+check(hypot(flipTarget.x - (800 - visibleTarget.x), flipTarget.y - visibleTarget.y) < 0.0001,
+      "image flip preserves rotated callout target")
+
+var pinStyle = StepAppearance(); pinStyle.shape = .pin
+var pinImageTransform = Annotation(id: 700, tool: .step, start: CGPoint(x: 100, y: 100), end: .zero, stepAppearance: pinStyle)
+let originalPinTip = StepGeometry.tip(pinImageTransform)
+pinImageTransform.transform { CGPoint(x: 600 - $0.y, y: $0.x) }
+check(StepGeometry.tip(pinImageTransform) == CGPoint(x: 600 - originalPinTip.y, y: originalPinTip.x),
+      "image rotation includes an implicit pin target")
+
+do {
+    let stepProject = EditorProject(doc: markers, layers: [], framed: false)
+    let decodedSteps = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(stepProject))
+    check(decodedSteps == stepProject && decodedSteps.doc.items[0].stepLabel == "Start",
+          "step appearance and manual label reopen without losing sequence identity")
+    var resumed = decodedSteps.doc
+    let next = resumed.add(.step, start: .zero, end: .zero)
+    check(next.stepNumber == expectedCopiedStep, "step counter survives project save/reopen")
+    let radiusStyle = AnnotationStyle(filled: true, simplifyCornerRadius: 12)
+    let regularRect = Annotation(id: 800, tool: .rect, start: .zero, end: CGPoint(x: 100, y: 40))
+    let block = radiusStyle.applied(to: regularRect)
+    check(block.id == regularRect.id && block.filled && block.simplifyCornerRadius == 12,
+          "saved Simplify style produces one editable rounded block")
+    let regularArrow = Annotation(id: 801, tool: .arrow, start: .zero, end: CGPoint(x: 100, y: 40))
+    check(radiusStyle.applied(to: regularArrow).simplifyCornerRadius == nil, "Simplify properties do not leak into other tools")
+} catch { check(false, "step persistence: \(error)") }
 
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

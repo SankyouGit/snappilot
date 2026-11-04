@@ -16,6 +16,9 @@ struct StepProperties: View {
             Picker("Font", selection: $model.stepAppearance.fontFamily) {
                 ForEach(["System", "Helvetica", "Arial", "Georgia", "Menlo"], id: \.self) { Text($0).tag($0) }
             }
+            Toggle("Bold", isOn: Binding(get: { model.stepAppearance.bold ?? true }, set: { model.stepAppearance.bold = $0 }))
+            Text("Label padding")
+            Slider(value: $model.stepAppearance.padding, in: 2...20)
             ColorPicker("Label color", selection: Binding(
                 get: { Color(nsColor: nsColor(fromHex: model.stepAppearance.textColorHex ?? (model.stepAppearance.shape == .ring ? model.colorHex : "#FFFFFF"))) },
                 set: { model.stepAppearance.textColorHex = hexString(fromNSColor: NSColor($0)) }), supportsOpacity: false)

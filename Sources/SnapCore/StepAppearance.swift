@@ -17,6 +17,7 @@ public struct StepAppearance: Codable, Equatable, Sendable {
     public var size: Double = 40
     public var fontSize: Double = 22
     public var fontFamily: String = "System"
+    public var bold: Bool?
     public var textColorHex: String?
     public var borderColorHex: String = "#FFFFFF"
     public var borderWidth: Double = 2

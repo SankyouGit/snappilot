@@ -77,14 +77,7 @@ extension EditorModel {
     // MARK: Styles
 
     /// Load a saved style into the panel (which also restyles any selection).
-    func applyStyle(_ style: AnnotationStyle) {
-        colorHex = style.colorHex; thickness = style.thickness; filled = style.filled; opacity = style.opacity
-        stepStyle = style.stepStyle; lineStyle = style.lineStyle
-        startHead = style.startHead; endHead = style.endHead; arrowSize = style.arrowSize
-        if let appearance = style.calloutAppearance { calloutAppearance = appearance }
-        if let appearance = style.stepAppearance { stepAppearance = appearance }
-        if let radius = style.simplifyCornerRadius { simplifyCornerRadius = radius }
-    }
+    func applyStyle(_ style: AnnotationStyle) { applyStoredStyle(style) }
 
     func count(of tool: Tool) -> Int { doc.items.filter { $0.tool == tool }.count }
 

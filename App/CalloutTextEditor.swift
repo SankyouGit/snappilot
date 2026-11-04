@@ -49,7 +49,7 @@ struct CalloutTextEditor: NSViewRepresentable {
         var parent: CalloutTextEditor
         init(_ parent: CalloutTextEditor) { self.parent = parent }
         func textDidChange(_ notification: Notification) {
-            guard let view = notification.object as? NSTextView else { return }
+            guard let view = notification.object as? Input, !view.hasFinished else { return }
             parent.onChange(view.string)
         }
     }
@@ -60,6 +60,7 @@ struct CalloutTextEditor: NSViewRepresentable {
         var cancel: () -> Void = {}
         private var requestedFocus = false
         private var finished = false
+        var hasFinished: Bool { finished }
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             requestFocusIfNeeded()
@@ -93,6 +94,7 @@ struct CalloutTextEditor: NSViewRepresentable {
         }
         private func finish() {
             guard !finished else { return }
+            if hasMarkedText() { unmarkText() }
             finished = true; commit()
         }
     }
