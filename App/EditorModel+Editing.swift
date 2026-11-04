@@ -18,6 +18,7 @@ extension EditorModel {
     /// Copy the selected object. Returns false when nothing is selected.
     @discardableResult
     func copySelection() -> Bool {
+        finishTextEditing()
         if let id = selectedLayerID, let layer = imageLayers.first(where: { $0.id == id }) {
             Self.clip = .layer(layer)
         } else if let id = selectedID, let annotation = doc.items.first(where: { $0.id == id }) {
@@ -76,11 +77,7 @@ extension EditorModel {
     // MARK: Styles
 
     /// Load a saved style into the panel (which also restyles any selection).
-    func applyStyle(_ style: AnnotationStyle) {
-        colorHex = style.colorHex; thickness = style.thickness; filled = style.filled; opacity = style.opacity
-        stepStyle = style.stepStyle; lineStyle = style.lineStyle
-        startHead = style.startHead; endHead = style.endHead; arrowSize = style.arrowSize
-    }
+    func applyStyle(_ style: AnnotationStyle) { applyStoredStyle(style) }
 
     func count(of tool: Tool) -> Int { doc.items.filter { $0.tool == tool }.count }
 
@@ -89,6 +86,9 @@ extension EditorModel {
         guard preview.restyleAll(of: tool, to: currentStyle) > 0 else { return }
         beginTransform()
         let changed = doc.restyleAll(of: tool, to: currentStyle)
+        for a in doc.items where a.isModernCallout {
+            doc.update(id: a.id) { $0 = CalloutTextLayout.fitted($0) }
+        }
         Toast.show("Restyled \(changed) \(changed == 1 ? "annotation" : "annotations")", symbol: "paintbrush.fill")
     }
 
@@ -98,7 +98,7 @@ extension EditorModel {
     /// everything already fits.
     @discardableResult
     func expandCanvasToFit(padding: CGFloat = 0, recordUndo: Bool = true) -> Bool {
-        let rects = imageLayers.map(\.rect) + doc.items.map { selectionRect(from: $0.start, to: $0.end) }
+        let rects = imageLayers.map(\.rect) + doc.items.map { CalloutGeometry.bounds($0) }
         guard let growth = LayerPlacement.expansion(canvas: pixelSize, fitting: rects, padding: padding),
               let grown = ImageOps.expanded(base, to: growth.size, offset: growth.offset) else { return false }
         if recordUndo { beginTransform() }

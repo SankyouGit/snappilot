@@ -1,9 +1,10 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, feature/annotation-workflow]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,3 +34,20 @@ jobs:
             -configuration Debug -destination 'platform=macOS' \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             build
+
+      - name: Check native annotation input and rendering
+        run: |
+          xcodebuild -project Snappilot.xcodeproj -scheme Snappilot \
+            -configuration Debug -destination 'platform=macOS' \
+            -resultBundlePath .build/AnnotationTests.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            test
+
+      - name: Retain native test results and render attachments
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: annotation-test-results
+          path: .build/AnnotationTests.xcresult
+          if-no-files-found: ignore
+          include-hidden-files: true

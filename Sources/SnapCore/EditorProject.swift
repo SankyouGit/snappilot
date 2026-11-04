@@ -20,7 +20,7 @@ public struct EditorProject: Codable, Equatable, Sendable {
         var fileName: String { "layer-\(id).png" }
     }
 
-    public static let currentVersion = 1
+    public static let currentVersion = 7
     public var version: Int
     public var doc: AnnotationDocument
     public var layers: [Layer]
@@ -81,7 +81,11 @@ public struct EditorProject: Codable, Equatable, Sendable {
     public static func load(from folder: URL) throws -> Loaded? {
         let jsonURL = folder.appendingPathComponent("project.json")
         guard FileManager.default.fileExists(atPath: jsonURL.path) else { return nil }
-        let project = try JSONDecoder().decode(EditorProject.self, from: Data(contentsOf: jsonURL))
+        let data = try Data(contentsOf: jsonURL)
+        struct Header: Decodable { let version: Int }
+        let version = try JSONDecoder().decode(Header.self, from: data).version
+        guard version <= currentVersion else { throw Failure.unsupportedVersion(version) }
+        let project = try JSONDecoder().decode(EditorProject.self, from: data)
         guard project.version <= currentVersion else { throw Failure.unsupportedVersion(project.version) }
         guard let base = readPNG(folder.appendingPathComponent("base.png")) else {
             throw Failure.unreadable("base.png")

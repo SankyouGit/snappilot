@@ -69,6 +69,10 @@ enum AnnotationRenderer {
             drawHead(a.startHead, at: s, from: e, width: lw, sizeScale: sz, color: color)
             drawHead(a.endHead, at: e, from: s, width: lw, sizeScale: sz, color: color)
         case .rect:
+            if let radius = a.simplifyCornerRadius {
+                NSBezierPath(roundedRect: blRect(start: a.start, end: a.end, imageHeight: h), xRadius: radius, yRadius: radius).fill()
+                return
+            }
             let p = NSBezierPath(rect: blRect(start: a.start, end: a.end, imageHeight: h))
             p.lineWidth = lw
             if a.filled { p.fill() } else { if !dash.isEmpty { p.setLineDash(dash, count: dash.count, phase: 0) }; p.stroke() }
@@ -93,9 +97,18 @@ enum AnnotationRenderer {
         case .text:
             drawText(a.text, at: flipY(a.start, h), color: color, size: max(14, lw * 6))
         case .callout:
-            drawCallout(a, imageHeight: h, color: color, lw: lw)
+            if a.isModernCallout {
+                ctx.saveGState()
+                ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1)
+                CalloutTextLayout.draw(a, in: ctx)
+                ctx.restoreGState()
+            } else { drawCallout(a, imageHeight: h, color: color, lw: lw) }
         case .step:
-            drawStep(a.stepLabel, center: flipY(a.start, h), radius: max(14, lw * 5), color: color)
+            if a.stepAppearance != nil {
+                ctx.saveGState(); ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1)
+                StepRenderer.draw(a, in: ctx)
+                ctx.restoreGState()
+            } else { drawStep(a.stepLabel, center: flipY(a.start, h), radius: max(14, lw * 5), color: color) }
         case .blur:
             // Pixelate the region of the frame. For video this becomes a static blurred
             // patch baked over the clip — good for hiding a fixed name/logo/field.

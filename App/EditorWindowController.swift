@@ -69,6 +69,7 @@ final class EditorWindowController: NSWindowController, NSWindowDelegate {
 
     /// Closing with unsaved annotations asks first, like any Mac document.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        model.finishTextEditing()
         guard model.onApplyToVideo == nil, model.hasUnsavedChanges else { return true }
         let alert = NSAlert()
         alert.messageText = "Save your changes to this capture?"

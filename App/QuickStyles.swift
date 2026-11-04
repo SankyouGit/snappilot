@@ -10,12 +10,40 @@ struct QuickStyle {
     var endHead: ArrowHead = .none
     var stepStyle: StepStyle = .number
     var thickness: Double? = nil
+    var calloutAppearance: CalloutAppearance? = nil
+    var stepAppearance: StepAppearance? = nil
 
     static func presets(for tool: Tool) -> [QuickStyle] {
         let red = "#FF3B30", orange = "#FF9500", yellow = "#FFCC00", green = "#34C759"
         let blue = "#007AFF", purple = "#AF52DE", teal = "#22B8CF", pink = "#FF2D55", white = "#FFFFFF"
 
         switch tool {
+        case .callout:
+            let arrow = CalloutAppearance()
+            var block = arrow; block.shape = .blockArrow; block.alignment = .center; block.fontSize = 32; block.blockArrowAutoTextSize = true
+            var bubble = arrow; bubble.shape = .bubble
+            var amber = bubble; amber.textColorHex = "#172B4D"
+            var outlined = bubble; outlined.textColorHex = "#172B4D"
+            outlined.borderWidth = 2; outlined.borderColorHex = "#172B4D"
+            var label = arrow; label.shape = .roundedLabel
+            var oval = label; oval.shape = .ellipse; oval.alignment = .center
+            var cloud = oval; cloud.shape = .cloud
+            var thought = cloud; thought.shape = .thought
+            var burst = oval; burst.shape = .burst; burst.textColorHex = "#172B4D"
+            return [
+                QuickStyle(color: "#153E75", calloutAppearance: block),
+                QuickStyle(color: red, calloutAppearance: block),
+                QuickStyle(color: "#153E75", calloutAppearance: arrow),
+                QuickStyle(color: red, calloutAppearance: arrow),
+                QuickStyle(color: "#153E75", calloutAppearance: bubble),
+                QuickStyle(color: "#F8C84B", calloutAppearance: amber),
+                QuickStyle(color: "#FFFFFF", calloutAppearance: outlined),
+                QuickStyle(color: "#303846", calloutAppearance: label),
+                QuickStyle(color: "#153E75", calloutAppearance: oval),
+                QuickStyle(color: "#153E75", calloutAppearance: cloud),
+                QuickStyle(color: "#153E75", calloutAppearance: thought),
+                QuickStyle(color: "#F8C84B", calloutAppearance: burst),
+            ]
         case .arrow, .line:
             return [
                 QuickStyle(color: red, endHead: .arrow),
@@ -45,7 +73,15 @@ struct QuickStyle {
                 QuickStyle(color: white, lineStyle: .dashed),
             ]
         case .step:
+            let circle = StepAppearance()
+            var square = circle; square.shape = .roundedSquare
+            var pin = circle; pin.shape = .pin
+            var ring = circle; ring.shape = .ring
             return [
+                QuickStyle(color: red, stepAppearance: circle),
+                QuickStyle(color: blue, stepAppearance: square),
+                QuickStyle(color: purple, stepAppearance: pin),
+                QuickStyle(color: blue, stepAppearance: ring),
                 QuickStyle(color: red, stepStyle: .number),
                 QuickStyle(color: orange, stepStyle: .number),
                 QuickStyle(color: blue, stepStyle: .number),
@@ -75,6 +111,21 @@ struct QuickStylePreview: View {
             let color = Color(nsColor: nsColor(fromHex: style.color))
             let pad: CGFloat = 8
             switch tool {
+            case .callout:
+                let appearance = style.calloutAppearance ?? CalloutAppearance()
+                var a = Annotation(id: 0, tool: .callout,
+                    start: CGPoint(x: 5, y: 6), end: CGPoint(x: max(25, size.width - 14), y: size.height - 8),
+                    colorHex: style.color, pointerTip: CGPoint(x: size.width - 3, y: size.height - 3),
+                    calloutAppearance: appearance)
+                a.calloutAppearance?.cornerRadius = min(5, appearance.cornerRadius)
+                let path = Path(CalloutGeometry.path(a))
+                ctx.fill(path, with: .color(color))
+                if appearance.borderWidth > 0 {
+                    ctx.stroke(path, with: .color(Color(nsColor: nsColor(fromHex: appearance.borderColorHex))), lineWidth: 1)
+                }
+                ctx.draw(Text("Aa").font(.system(size: 11, weight: appearance.bold ? .semibold : .regular))
+                    .foregroundColor(Color(nsColor: nsColor(fromHex: appearance.textColorHex))),
+                    at: CGPoint(x: (a.start.x + a.end.x) / 2, y: size.height / 2))
             case .arrow, .line:
                 let s = CGPoint(x: pad, y: size.height - pad)
                 let e = CGPoint(x: size.width - pad, y: pad)
@@ -95,6 +146,13 @@ struct QuickStylePreview: View {
                 else { ctx.stroke(Path(ellipseIn: r), with: .color(color),
                                   style: StrokeStyle(lineWidth: 2.5, dash: style.lineStyle.dashPattern(width: 2.5).map { CGFloat($0) })) }
             case .step:
+                if var appearance = style.stepAppearance {
+                    appearance.size = 22; appearance.fontSize = 12; appearance.padding = 3; appearance.shadow = false
+                    let a = Annotation(id: 0, tool: .step, start: CGPoint(x: size.width / 2, y: size.height / 2 - 2),
+                        end: .zero, colorHex: style.color, stepNumber: 1, stepStyle: style.stepStyle, stepAppearance: appearance)
+                    ctx.withCGContext { StepRenderer.draw(a, in: $0) }
+                    return
+                }
                 let d = min(size.width, size.height) - pad * 2
                 let r = CGRect(x: (size.width - d) / 2, y: (size.height - d) / 2, width: d, height: d)
                 ctx.fill(Path(ellipseIn: r), with: .color(color))
