@@ -14,6 +14,9 @@ struct CalloutProperties: View {
                 })
     }
 
+    private var tailCount: Int {
+        model.selectedID.flatMap { id in model.doc.items.first { $0.id == id }?.additionalPointerTips?.count } ?? 0
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("CALLOUT").font(.caption2.weight(.bold)).foregroundStyle(.secondary)
@@ -110,8 +113,8 @@ struct CalloutProperties: View {
             }
             if [.arrow, .bubble, .thought].contains(model.calloutAppearance.shape) {
                 HStack {
-                    Button("Add Tail") { model.addCalloutTail() }
-                    Button("Remove Tail") { model.removeCalloutTail() }
+                    Button("Add Tail") { model.addCalloutTail() }.disabled(tailCount >= 3)
+                    Button("Remove Tail") { model.removeCalloutTail() }.disabled(tailCount == 0)
                 }.disabled(model.selectedID == nil)
                 Text("Drag yellow endpoints independently. Green handle rotates the object.")
                     .font(.caption2).foregroundStyle(.secondary)

@@ -19,6 +19,7 @@ struct EditorView: View {
     @State private var freehandPoints: [CGPoint] = []
     @State private var showSimplifyPreview = false
     @State private var simplifiedPreview: CGImage?
+    @State private var simplifySamplingImage: CGImage?
     @State private var showResize = false
     @State private var resizeWidth = ""
     @State private var resizeHeight = ""
@@ -88,7 +89,7 @@ struct EditorView: View {
         .background { EditorShortcuts(model: model, copyImage: copy, exportImage: { save() }) }
         .focusable()
         .onKeyPress { press in
-            guard model.editingTextID == nil else { return .ignored }
+            guard model.editingTextID == nil, !(NSApp.keyWindow?.firstResponder is NSText) else { return .ignored }
             if model.editingTextID == nil, model.hasSelection, let delta = nudgeDelta(press) {
                 model.nudgeSelection(dx: delta.x, dy: delta.y)
                 return .handled
@@ -120,7 +121,7 @@ struct EditorView: View {
             model.tool = tools[n - 1].0; mode = .draw
             return .handled
         }
-        .onDeleteCommand { model.deleteSelected() }
+        .onDeleteCommand { if !(NSApp.keyWindow?.firstResponder is NSText) { model.deleteSelected() } }
         .sheet(isPresented: $showSimplifyPreview) {
             if let image = simplifiedPreview {
                 SimplifyPreview(original: model.compositeBase(), simplified: image,
@@ -209,7 +210,7 @@ struct EditorView: View {
                 .help("Add a screenshot, logo, or image as a movable overlay")
             Menu {
                 Button("Edit Recognized Text…", systemImage: "character.cursor.ibeam") { scanEditableText() }
-                Button("Simplify Region", systemImage: "rectangle.dashed") { model.finishTextEditing(); model.selectedID = nil; mode = .simplify }
+                Button("Simplify Region", systemImage: "rectangle.dashed") { model.finishTextEditing(); model.selectedID = nil; simplifySamplingImage = model.compositeBase(); mode = .simplify }
                 Button("Simplify Full Image…", systemImage: "wand.and.stars") {
                     simplifiedPreview = model.simplifyPreview()
                     showSimplifyPreview = simplifiedPreview != nil
@@ -339,7 +340,7 @@ struct EditorView: View {
                         if mode == .simplify {
                             a.filled = true; a.simplifyCornerRadius = model.simplifyCornerRadius
                             a.colorHex = model.simplifySampleBackground
-                                ? SimplifySampling.surroundingColorHex(model.base, region: selectionRect(from: d.start, to: d.end)) : model.colorHex
+                                ? SimplifySampling.surroundingColorHex(simplifySamplingImage ?? model.base, region: selectionRect(from: d.start, to: d.end)) : model.colorHex
                         }
                         if d.tool == .callout {
                             a.calloutAppearance = model.calloutAppearance

@@ -58,7 +58,12 @@ public struct CalloutAppearance: Equatable, Codable, Sendable {
         out.pointerScale = min(2, max(0.5, pointerScale))
         if let scale = blockArrowShaftScale { out.blockArrowShaftScale = min(2, max(0.35, scale)) }
         if let bend = blockArrowBend { out.blockArrowBend = min(1, max(-1, bend)) }
-        if let rotation = rotationDegrees { out.rotationDegrees = rotation.truncatingRemainder(dividingBy: 360) }
+        if let rotation = rotationDegrees {
+            var degrees = rotation.truncatingRemainder(dividingBy: 360)
+            if degrees > 180 { degrees -= 360 }
+            if degrees < -180 { degrees += 360 }
+            out.rotationDegrees = degrees
+        }
         if let offset = pointerAnchorOffset { out.pointerAnchorOffset = min(0.95, max(0.05, offset)) }
         return out
     }

@@ -32,6 +32,8 @@ struct CalloutTextEditor: NSViewRepresentable {
         // Never replace the input string during composition or reset the selection on redraw.
     }
     private func configure(_ view: Input) {
+        view.commit = onCommit; view.cancel = onCancel
+        if view.hasMarkedText() { return }
         let font = CalloutTextLayout.font(annotation)
         view.font = NSFont(descriptor: font.fontDescriptor, size: font.pointSize * scale)
         let attributes = CalloutTextLayout.attributes(annotation)
@@ -60,10 +62,18 @@ struct CalloutTextEditor: NSViewRepresentable {
         private var finished = false
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard let window, !requestedFocus else { return }
-            requestedFocus = true
-            window.makeFirstResponder(self)
-            setSelectedRange(NSRange(location: (string as NSString).length, length: 0))
+            requestFocusIfNeeded()
+        }
+        override func layout() {
+            super.layout()
+            requestFocusIfNeeded()
+        }
+        private func requestFocusIfNeeded() {
+            guard let window, !requestedFocus, !finished else { return }
+            if window.makeFirstResponder(self) {
+                requestedFocus = true
+                setSelectedRange(NSRange(location: (string as NSString).length, length: 0))
+            }
         }
         override func keyDown(with event: NSEvent) {
             if (event.keyCode == 36 || event.keyCode == 76) && event.modifierFlags.contains(.command) {
