@@ -58,7 +58,7 @@ struct SnappilotApp: App {
             Divider()
             Button("Arrow", systemImage: "arrow.up.right") { app.selectEditorTool(.arrow) }
             Button("Text", systemImage: "textformat") { app.selectEditorTool(.text) }
-            Button("Callout", systemImage: "bubble.left.fill") { app.selectEditorTool(.callout) }
+            Button("Callout", systemImage: "bubble.left.and.bubble.right.fill") { app.selectEditorTool(.callout) }
             Button("Rectangle", systemImage: "rectangle") { app.selectEditorTool(.rect) }
             Button("Ellipse", systemImage: "circle") { app.selectEditorTool(.ellipse) }
             Button("Line", systemImage: "line.diagonal") { app.selectEditorTool(.line) }

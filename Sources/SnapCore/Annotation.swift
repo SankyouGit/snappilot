@@ -66,6 +66,9 @@ public struct Annotation: Identifiable, Equatable, Sendable, Codable {
     public var tool: Tool
     public var start: CGPoint
     public var end: CGPoint
+    /// Pointer target for modern callouts; retained when a label variant hides its tail.
+    public var pointerTip: CGPoint?
+    public var calloutAppearance: CalloutAppearance?
     public var text: String
     public var colorHex: String
     public var thickness: Double
@@ -93,7 +96,10 @@ public struct Annotation: Identifiable, Equatable, Sendable, Codable {
                 filled: Bool = false, opacity: Double = 1, stepStyle: StepStyle = .number,
                 lineStyle: LineStyle = .solid, startHead: ArrowHead = .none,
                 endHead: ArrowHead = .arrow, arrowSize: ArrowSize = .medium, points: [CGPoint] = [],
-                redactStyle: RedactStyle? = nil) {
+                redactStyle: RedactStyle? = nil, pointerTip: CGPoint? = nil,
+                calloutAppearance: CalloutAppearance? = nil) {
+        self.calloutAppearance = calloutAppearance
+        self.pointerTip = pointerTip
         self.id = id
         self.tool = tool
         self.start = start
@@ -115,14 +121,26 @@ public struct Annotation: Identifiable, Equatable, Sendable, Codable {
 
     /// Move the whole annotation, including any freehand points.
     public mutating func translate(dx: CGFloat, dy: CGFloat) {
+        if let tip = pointerTip { pointerTip = CGPoint(x: tip.x + dx, y: tip.y + dy) }
         start.x += dx; start.y += dy
         end.x += dx; end.y += dy
         points = points.map { CGPoint(x: $0.x + dx, y: $0.y + dy) }
     }
 
     public mutating func transform(_ map: (CGPoint) -> CGPoint) {
+        pointerTip = pointerTip.map(map)
         start = map(start); end = map(end)
         points = points.map(map)
+    }
+
+    public var isModernCallout: Bool { tool == .callout && (pointerTip != nil || calloutAppearance != nil) }
+
+    public var resolvedCalloutAppearance: CalloutAppearance {
+        if let appearance = calloutAppearance { return appearance.normalized() }
+        var appearance = CalloutAppearance()
+        appearance.fontSize = max(13, thickness * 5)
+        if pointerTip == nil { appearance.shape = .roundedLabel }
+        return appearance
     }
 
     /// The rendered label for a step badge (e.g. "1", "A", "b").
@@ -209,7 +227,8 @@ public struct AnnotationDocument: Sendable, Codable {
                           filled: copy.filled, opacity: copy.opacity, stepStyle: copy.stepStyle,
                           lineStyle: copy.lineStyle, startHead: copy.startHead,
                           endHead: copy.endHead, arrowSize: copy.arrowSize, points: copy.points,
-                          redactStyle: copy.redactStyle)
+                          redactStyle: copy.redactStyle, pointerTip: copy.pointerTip,
+                          calloutAppearance: copy.calloutAppearance)
         copy.translate(dx: offset.x, dy: offset.y)
         nextID += 1
         if copy.tool == .step { nextStep += 1 }
@@ -264,10 +283,13 @@ public struct AnnotationStyle: Equatable, Sendable, Codable {
     public var arrowSize: ArrowSize
     /// Optional so styles saved before redaction styles existed still decode.
     public var redactStyle: RedactStyle?
+    public var calloutAppearance: CalloutAppearance?
 
     public init(colorHex: String = "#FF3B30", thickness: Double = 3, filled: Bool = false, opacity: Double = 1,
                 stepStyle: StepStyle = .number, lineStyle: LineStyle = .solid, startHead: ArrowHead = .none,
-                endHead: ArrowHead = .arrow, arrowSize: ArrowSize = .medium, redactStyle: RedactStyle? = nil) {
+                endHead: ArrowHead = .arrow, arrowSize: ArrowSize = .medium, redactStyle: RedactStyle? = nil,
+                calloutAppearance: CalloutAppearance? = nil) {
+        self.calloutAppearance = calloutAppearance
         self.colorHex = colorHex; self.thickness = thickness; self.filled = filled; self.opacity = opacity
         self.stepStyle = stepStyle; self.lineStyle = lineStyle; self.startHead = startHead
         self.endHead = endHead; self.arrowSize = arrowSize; self.redactStyle = redactStyle
@@ -276,7 +298,8 @@ public struct AnnotationStyle: Equatable, Sendable, Codable {
     public init(of a: Annotation) {
         self.init(colorHex: a.colorHex, thickness: a.thickness, filled: a.filled, opacity: a.opacity,
                   stepStyle: a.stepStyle, lineStyle: a.lineStyle, startHead: a.startHead,
-                  endHead: a.endHead, arrowSize: a.arrowSize, redactStyle: a.redactStyle)
+                  endHead: a.endHead, arrowSize: a.arrowSize, redactStyle: a.redactStyle,
+                  calloutAppearance: a.calloutAppearance)
     }
 
     /// `a` with this style; geometry, text and step number are kept. Opacity is clamped to 0.05…1
@@ -286,6 +309,9 @@ public struct AnnotationStyle: Equatable, Sendable, Codable {
         out.colorHex = colorHex; out.thickness = max(0.5, thickness); out.filled = filled
         out.opacity = min(1, max(0.05, opacity)); out.stepStyle = stepStyle; out.lineStyle = lineStyle
         out.startHead = startHead; out.endHead = endHead; out.arrowSize = arrowSize
+        if a.tool == .callout, let calloutAppearance {
+            out.calloutAppearance = calloutAppearance.normalized()
+        }
         if a.tool == .blur, let redactStyle { out.redactStyle = redactStyle }
         return out
     }

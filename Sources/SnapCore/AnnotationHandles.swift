@@ -3,7 +3,7 @@ import CoreGraphics
 /// Grab points on a selected annotation: the two ends of a line/arrow, or the four corners
 /// of a box-shaped annotation. Badge-like annotations (text, step, stamp, pen) have none.
 public enum AnnotationHandle: Equatable, Sendable {
-    case start, end
+    case start, end, pointerTip, shaftWidth, arrowheadSize, arrowBend
     case topLeft, topRight, bottomLeft, bottomRight
 
     public static func handles(for a: Annotation) -> [(AnnotationHandle, CGPoint)] {
@@ -12,7 +12,13 @@ public enum AnnotationHandle: Equatable, Sendable {
             return [(.start, a.start), (.end, a.end)]
         case .rect, .ellipse, .highlight, .blur, .spotlight, .magnify, .callout:
             let r = selectionRect(from: a.start, to: a.end)
-            return [(.topLeft, CGPoint(x: r.minX, y: r.minY)), (.topRight, CGPoint(x: r.maxX, y: r.minY)),
+            let tip: [(AnnotationHandle, CGPoint)] = a.resolvedCalloutAppearance.shape.hasPointer ? (a.pointerTip.map { [(.pointerTip, $0)] } ?? []) : []
+            let controls: [(AnnotationHandle, CGPoint)]
+            if a.tool == .callout && a.resolvedCalloutAppearance.shape == .blockArrow {
+                let geometry = BlockArrowGeometry(a)
+                controls = [(.shaftWidth, geometry.shaftHandle), (.arrowheadSize, geometry.headHandle), (.arrowBend, geometry.bendHandle)]
+            } else { controls = [] }
+            return controls + tip + [(.topLeft, CGPoint(x: r.minX, y: r.minY)), (.topRight, CGPoint(x: r.maxX, y: r.minY)),
                     (.bottomLeft, CGPoint(x: r.minX, y: r.maxY)), (.bottomRight, CGPoint(x: r.maxX, y: r.maxY))]
         case .text, .step, .stamp, .pen, .crop, .smartMove:
             return []
@@ -32,6 +38,28 @@ public enum AnnotationHandle: Equatable, Sendable {
     public func dragged(_ original: Annotation, to point: CGPoint) -> Annotation {
         var out = original
         switch self {
+        case .shaftWidth, .arrowheadSize, .arrowBend:
+            let geometry = BlockArrowGeometry(original)
+            var style = original.resolvedCalloutAppearance
+            func transverseDistance(from anchor: CGPoint) -> CGFloat {
+                (point.x - anchor.x) * geometry.transverse.x + (point.y - anchor.y) * geometry.transverse.y
+            }
+            switch self {
+            case .shaftWidth:
+                let center = geometry.shaftCenter, normal = geometry.shaftNormal
+                let distance = (point.x - center.x) * normal.x + (point.y - center.y) * normal.y
+                style.blockArrowShaftScale = Double(abs(distance) * 2 / geometry.crossSize)
+            case .arrowheadSize:
+                let neck = geometry.headCenter, normal = geometry.headNormal
+                let distance = (point.x - neck.x) * normal.x + (point.y - neck.y) * normal.y
+                style.pointerScale = Double((abs(distance) / max(1, geometry.halfWidth) - 1) / 0.6)
+            case .arrowBend:
+                let middle = geometry.point(geometry.controlX, 0)
+                style.blockArrowBend = Double((transverseDistance(from: middle) + geometry.halfWidth + 18) / geometry.crossSize)
+            default: break
+            }
+            out.calloutAppearance = style.normalized()
+        case .pointerTip: out.pointerTip = point
         case .start: out.start = point
         case .end: out.end = point
         case .topLeft, .topRight, .bottomLeft, .bottomRight:

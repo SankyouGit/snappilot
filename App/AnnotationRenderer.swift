@@ -93,7 +93,12 @@ enum AnnotationRenderer {
         case .text:
             drawText(a.text, at: flipY(a.start, h), color: color, size: max(14, lw * 6))
         case .callout:
-            drawCallout(a, imageHeight: h, color: color, lw: lw)
+            if a.isModernCallout {
+                ctx.saveGState()
+                ctx.translateBy(x: 0, y: CGFloat(h)); ctx.scaleBy(x: 1, y: -1)
+                CalloutTextLayout.draw(a, in: ctx)
+                ctx.restoreGState()
+            } else { drawCallout(a, imageHeight: h, color: color, lw: lw) }
         case .step:
             drawStep(a.stepLabel, center: flipY(a.start, h), radius: max(14, lw * 5), color: color)
         case .blur:

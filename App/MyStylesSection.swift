@@ -73,6 +73,6 @@ extension QuickStyle {
     init(_ style: AnnotationStyle) {
         self.init(color: style.colorHex, lineStyle: style.lineStyle, filled: style.filled,
                   startHead: style.startHead, endHead: style.endHead, stepStyle: style.stepStyle,
-                  thickness: style.thickness)
+                  thickness: style.thickness, calloutAppearance: style.calloutAppearance)
     }
 }

@@ -507,6 +507,8 @@ do {
 
     var projectDoc = AnnotationDocument()
     projectDoc.add(.arrow, start: CGPoint(x: 1, y: 2), end: CGPoint(x: 30, y: 40), colorHex: "#00FF00")
+    let diskCallout = projectDoc.add(.callout, start: CGPoint(x: 2, y: 3), end: CGPoint(x: 15, y: 8), text: "Save\nnow")
+    projectDoc.update(id: diskCallout.id) { $0 = CalloutGeometry.create($0, target: CGPoint(x: 400, y: 6)) }
     _ = projectDoc.addStroke([CGPoint(x: 0, y: 0), CGPoint(x: 5, y: 5)], style: AnnotationStyle())
     let layerInfo = EditorProject.Layer(id: 7, rect: CGRect(x: 3, y: 4, width: 6, height: 4), opacity: 0.5, name: "Logo")
     let project = EditorProject(doc: projectDoc, layers: [layerInfo], framed: true)
@@ -827,6 +829,239 @@ check(redactDoc.insertCopy(of: solidBlur).redactStyle == .solid, "copies keep th
 if let legacy = try? JSONDecoder().decode(AnnotationStyle.self, from: Data(##"{"colorHex":"#FF0000","thickness":3,"filled":false,"opacity":1,"stepStyle":"number","lineStyle":"solid","startHead":"none","endHead":"arrow","arrowSize":"medium"}"##.utf8)) {
     check(legacy.redactStyle == nil, "styles saved before this release still load")
 } else { check(false, "legacy saved style decodes") }
+
+// MARK: Text Arrow compatibility and geometry
+let oldCalloutJSON = ##"{"version":1,"doc":{"items":[{"id":4,"tool":"callout","start":[20,30],"end":[240,102],"text":"Legacy label","colorHex":"#007AFF","thickness":4,"filled":true,"opacity":1,"stepStyle":"number","lineStyle":"solid","startHead":"none","endHead":"arrow","arrowSize":"medium","points":[]}],"nextID":5,"nextStep":1},"layers":[],"framed":false}"##
+do {
+    let legacy = try JSONDecoder().decode(EditorProject.self, from: Data(oldCalloutJSON.utf8))
+    let fixtureFolder = FileManager.default.temporaryDirectory.appendingPathComponent("legacy-callout-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: fixtureFolder) }
+    if let base = renderSolid(width: 400, height: 200) {
+        try EditorProject.save(legacy, base: base, layerImages: [:], to: fixtureFolder)
+        let reopened = try EditorProject.load(from: fixtureFolder)
+        check(reopened?.project == legacy, "populated v1 project reopens from disk without conversion")
+    } else { check(false, "legacy fixture base image creation") }
+    let old = legacy.doc.items[0]
+    check(old.pointerTip == nil && old.text == "Legacy label", "populated v1 callout keeps legacy rendering discriminator and text")
+    check(old.start == CGPoint(x: 20, y: 30) && old.end == CGPoint(x: 240, y: 102), "v1 body geometry unchanged")
+    check(AnnotationHandle.handles(for: old).count == 4, "legacy callout retains four handles")
+    var modernDoc = legacy.doc
+    let modern = CalloutGeometry.create(old, target: CGPoint(x: 320, y: 65))
+    modernDoc.update(id: old.id) { $0 = modern }
+    let copy = modernDoc.duplicate(id: old.id)!
+    check(copy.id == 5 && modernDoc.items.count == 2, "callout duplicate is one object and preserves legacy nextID")
+    check(copy.pointerTip == CGPoint(x: 336, y: 81) && copy.text == old.text, "duplicate moves body and pointer together")
+    let tipMoved = AnnotationHandle.pointerTip.dragged(modern, to: CGPoint(x: -50, y: 60))
+    check(tipMoved.start == modern.start && tipMoved.end == modern.end, "tip drag leaves text body fixed")
+    let resized = AnnotationHandle.bottomRight.dragged(modern, to: CGPoint(x: 280, y: 140))
+    check(resized.pointerTip == modern.pointerTip, "body resize preserves target")
+    var transformed = modern
+    transformed.transform { CGPoint(x: $0.x * 2, y: $0.y * 2) }
+    check(transformed.pointerTip == CGPoint(x: 640, y: 130), "image transform includes callout target")
+    let project = EditorProject(doc: modernDoc, layers: [], framed: false)
+    let decoded = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(project))
+    check(decoded == project && decoded.version == EditorProject.currentVersion, "current project round-trips editable callouts")
+    check(decoded.doc.items[0].pointerTip == modern.pointerTip, "pointer survives project round trip")
+    modernDoc.restyle(id: modern.id, to: AnnotationStyle(colorHex: "#123456"))
+    check(modernDoc.items[0].pointerTip == modern.pointerTip && modernDoc.items[0].text == old.text, "restyle preserves text and geometry")
+    for target in [CGPoint(x: 340, y: 65), CGPoint(x: -100, y: 65), CGPoint(x: 80, y: -100), CGPoint(x: 80, y: 250)] {
+        let arrow = CalloutGeometry.create(old, target: target)
+        let path = CalloutGeometry.path(arrow)
+        check(path.contains(CGPoint(x: 100, y: 60)), "arrow body hit for each target direction")
+        check(CalloutGeometry.hit(target, on: arrow, tolerance: 8), "pointer has generous hit tolerance")
+        check(CalloutGeometry.bounds(arrow).contains(target), "bounds contain pointer")
+        check(!CalloutGeometry.hit(CGPoint(x: 1000, y: 1000), on: arrow, tolerance: 8), "distant point misses")
+    }
+    let rightArrow = CalloutGeometry.create(old, target: CGPoint(x: 400, y: 66))
+    let rightPath = CalloutGeometry.path(rightArrow)
+    check(rightPath.contains(CGPoint(x: 300, y: 66)), "slim arrow shaft connects body and head")
+    check(!rightPath.contains(CGPoint(x: 300, y: 40)), "shaft stays slim instead of extending full body width")
+    check(rightPath.contains(CGPoint(x: 375, y: 79)), "arrowhead has distinct wings")
+    check(!rightPath.contains(CGPoint(x: 395, y: 79)), "arrowhead tapers to target")
+    let referenceArrow = Annotation(id: 99, tool: .callout,
+        start: CGPoint(x: 55, y: 55), end: CGPoint(x: 176, y: 120),
+        pointerTip: CGPoint(x: 19, y: 14))
+    let referencePath = CalloutGeometry.path(referenceArrow)
+    check(referencePath.contains(CGPoint(x: 115, y: 85)), "rounded callout retains its text region")
+    check(referencePath.contains(CGPoint(x: 50, y: 40)), "diagonal shaft reaches toward reference target")
+    check(referencePath.contains(CGPoint(x: 32, y: 34)), "diagonal arrowhead has a clean shoulder")
+    check(!referencePath.contains(CGPoint(x: 32, y: 44)), "diagonal arrow avoids a broad triangular tail")
+    check(CalloutGeometry.bounds(referenceArrow).contains(CGPoint(x: 19, y: 14)), "diagonal bounds include target")
+    let tiny = CalloutGeometry.create(old, target: old.start)
+    check(CalloutGeometry.body(tiny).width >= 104 && tiny.pointerTip != old.start, "short drag produces usable body and visible tip")
+    var overlapping = modern; overlapping.pointerTip = CGPoint(x: 60, y: 60)
+    check(CalloutGeometry.path(overlapping).contains(CGPoint(x: 100, y: 60)), "overlapping tip retains valid body path")
+} catch { check(false, "Text Arrow regression threw: \(error)") }
+
+// MARK: Callout shape, appearance and saved-style compatibility
+for shape in CalloutShape.allCases {
+    var appearance = CalloutAppearance()
+    appearance.shape = shape
+    appearance.textColorHex = "#102030"
+    appearance.fontFamily = "Georgia"
+    appearance.fontSize = 24
+    appearance.borderWidth = 2
+    appearance.alignment = .center
+    appearance.shadow = true
+    var shapes = AnnotationDocument()
+    let seed = shapes.add(.callout, start: CGPoint(x: 40, y: 40), end: CGPoint(x: 260, y: 120), text: "Hello\nworld")
+    shapes.update(id: seed.id) {
+        $0.calloutAppearance = appearance
+        $0.pointerTip = CGPoint(x: 340, y: 80)
+    }
+    let shapeAnnotation = shapes.items[0]
+    check(CalloutGeometry.path(shapeAnnotation).contains(CGPoint(x: 150, y: 80)), "each callout shape contains its text body")
+    check(AnnotationHandle.handles(for: shapeAnnotation).count == (shape == .blockArrow ? 8 : (shape.hasPointer ? 5 : 4)), "only shapes with tails expose pointer handle")
+    if !shape.hasPointer {
+        check(!CalloutGeometry.hit(CGPoint(x: 340, y: 80), on: shapeAnnotation, tolerance: 3), "hidden tail cannot be selected")
+    }
+    let storedStyle = AnnotationStyle(of: shapeAnnotation)
+    var styleLibrary = SavedStyles()
+    styleLibrary.add(storedStyle, for: .callout)
+    do {
+        let restoredStyles = try JSONDecoder().decode(SavedStyles.self, from: JSONEncoder().encode(styleLibrary))
+        check(restoredStyles.styles(for: .callout) == [storedStyle], "My Styles preserves all callout properties")
+        let project = EditorProject(doc: shapes, layers: [], framed: false)
+        let reopened = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(project))
+        check(reopened == project && reopened.doc.items[0].calloutAppearance == appearance, "shape and appearance survive project round trip")
+        let duplicate = shapes.duplicate(id: seed.id)!
+        check(duplicate.calloutAppearance == appearance && duplicate.text == seed.text, "duplication preserves shape typography and contents")
+        var replacement = storedStyle
+        replacement.calloutAppearance?.shape = shape == .bubble ? .arrow : .bubble
+        shapes.restyle(id: seed.id, to: replacement)
+        check(shapes.items[0].pointerTip == shapeAnnotation.pointerTip, "shape changes retain pointer target")
+        check(shapes.items[1].calloutAppearance == appearance, "restyling one callout leaves duplicate untouched")
+        var modernArrow = AnnotationDocument()
+        let v2 = modernArrow.add(.callout, start: .zero, end: CGPoint(x: 220, y: 72), thickness: 5)
+        modernArrow.update(id: v2.id) { $0.pointerTip = CGPoint(x: 300, y: 36) }
+        var oldProject = EditorProject(doc: modernArrow, layers: [], framed: false)
+        oldProject.version = 2
+        let decodedV2 = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(oldProject))
+        check(decodedV2.doc.items[0].calloutAppearance == nil && decodedV2.doc.items[0].resolvedCalloutAppearance.fontSize == 25,
+              "v2 arrows retain original thickness-based text size")
+    } catch { check(false, "callout styles round trip: \(error)") }
+}
+var extremeAppearance = CalloutAppearance()
+extremeAppearance.fontSize = 1000; extremeAppearance.padding = -10; extremeAppearance.borderWidth = -1
+check(extremeAppearance.normalized().fontSize == 96 && extremeAppearance.normalized().padding == 4
+      && extremeAppearance.normalized().borderWidth == 0, "appearance normalizes unsafe dimensions")
+
+// MARK: Native preferences must store property-list-compatible Data
+let appearanceSuite = "snapverify-callout-settings-\(UUID().uuidString)"
+if let defaults = UserDefaults(suiteName: appearanceSuite) {
+    defer { defaults.removePersistentDomain(forName: appearanceSuite) }
+    check(CalloutAppearancePreferences.load(in: defaults) == CalloutAppearance(), "missing appearance uses defaults")
+    for shape in CalloutShape.allCases {
+        var appearance = CalloutAppearance()
+        appearance.shape = shape
+        appearance.textColorHex = "#172B4D"
+        appearance.fontSize = 27
+        CalloutAppearancePreferences.save(appearance, in: defaults)
+        check(defaults.object(forKey: "pref.calloutAppearance") is Data, "appearance writes Data accepted by UserDefaults")
+        check(CalloutAppearancePreferences.load(in: defaults) == appearance, "each shape survives the actual preferences boundary")
+    }
+    defaults.set(Data("bad JSON".utf8), forKey: "pref.calloutAppearance")
+    check(CalloutAppearancePreferences.load(in: defaults) == CalloutAppearance(), "corrupt appearance settings recover safely")
+    defaults.set("old value", forKey: "pref.calloutAppearance")
+    check(CalloutAppearancePreferences.load(in: defaults) == CalloutAppearance(), "old preference type recovers safely")
+} else { check(false, "preferences test suite creation") }
+
+var blockAppearance = CalloutAppearance(); blockAppearance.shape = .blockArrow
+let textBlock = Annotation(id: 100, tool: .callout, start: CGPoint(x: 20, y: 30),
+    end: CGPoint(x: 240, y: 102), text: "Type inside this arrow", pointerTip: CGPoint(x: 400, y: 66),
+    calloutAppearance: blockAppearance)
+let textBlockPath = CalloutGeometry.path(textBlock)
+check(textBlockPath.contains(CGPoint(x: 300, y: 40)), "block arrow shaft continues at full text-body width")
+let headGeometry = BlockArrowGeometry(textBlock)
+let headWing = headGeometry.headHandle
+// Use positive weights for all three triangle vertices: strictly inside, not on an edge.
+let headInterior = CGPoint(x: headWing.x * 0.8 + headGeometry.tip.x * 0.1 + headGeometry.headCenter.x * 0.1,
+                           y: headWing.y * 0.8 + headGeometry.tip.y * 0.1 + headGeometry.headCenter.y * 0.1)
+let shoulderDistance = (headInterior.x - headGeometry.headCenter.x) * headGeometry.headNormal.x
+    + (headInterior.y - headGeometry.headCenter.y) * headGeometry.headNormal.y
+check(textBlockPath.contains(headInterior) && shoulderDistance > headGeometry.halfWidth,
+      "block arrow has wide shoulders")
+check(!textBlockPath.contains(CGPoint(x: 395, y: 115)), "block arrow head converges to target")
+check(textBlockPath.contains(CGPoint(x: 100, y: 66)), "block arrow includes editable text region")
+check(CalloutGeometry.bounds(textBlock).maxY > CalloutGeometry.body(textBlock).maxY, "block arrow bounds include wide head")
+for tip in [CGPoint(x: -100, y: 66), CGPoint(x: 130, y: -100), CGPoint(x: 130, y: 250)] {
+    var turned = textBlock; turned.pointerTip = tip
+    check(CalloutGeometry.path(turned).contains(CGPoint(x: 130, y: 66)), "block arrow retains text region in each direction")
+    check(CalloutGeometry.hit(tip, on: turned, tolerance: 6), "block arrow pointer selectable in each direction")
+}
+
+// MARK: Curved block-arrow direct controls and legacy rectangle availability
+check(CalloutShape.availableCases.filter { $0.title == "Rectangle" } == [.roundedLabel],
+      "one rounded Rectangle is offered")
+check(!CalloutShape.availableCases.contains(.rectangle), "square legacy Rectangle is hidden without removing Codable support")
+let blockControls = AnnotationHandle.handles(for: textBlock)
+check(blockControls.map(\.0).contains(.shaftWidth) && blockControls.map(\.0).contains(.arrowheadSize)
+      && blockControls.map(\.0).contains(.arrowBend), "block arrow exposes three direct geometry controls")
+let initialBlockGeometry = BlockArrowGeometry(textBlock)
+let widerPoint = CGPoint(x: initialBlockGeometry.shaftCenter.x + initialBlockGeometry.shaftNormal.x * initialBlockGeometry.halfWidth * 1.4,
+    y: initialBlockGeometry.shaftCenter.y + initialBlockGeometry.shaftNormal.y * initialBlockGeometry.halfWidth * 1.4)
+let widerArrow = AnnotationHandle.shaftWidth.dragged(textBlock, to: widerPoint)
+check(BlockArrowGeometry(widerArrow).halfWidth > initialBlockGeometry.halfWidth, "shaft control thickens the curved shaft")
+check(widerArrow.text == textBlock.text && widerArrow.pointerTip == textBlock.pointerTip, "shaft drag preserves label and target")
+let largerHeadPoint = CGPoint(x: initialBlockGeometry.headCenter.x + initialBlockGeometry.headNormal.x * initialBlockGeometry.headHalfWidth * 1.2,
+    y: initialBlockGeometry.headCenter.y + initialBlockGeometry.headNormal.y * initialBlockGeometry.headHalfWidth * 1.2)
+let largerHead = AnnotationHandle.arrowheadSize.dragged(textBlock, to: largerHeadPoint)
+check(largerHead.resolvedCalloutAppearance.pointerScale > textBlock.resolvedCalloutAppearance.pointerScale,
+      "head control enlarges head independently")
+check(BlockArrowGeometry(largerHead).halfWidth == initialBlockGeometry.halfWidth, "head size does not change shaft thickness")
+let bendPoint = initialBlockGeometry.point(initialBlockGeometry.controlX, initialBlockGeometry.crossSize * 0.6 - initialBlockGeometry.halfWidth - 18)
+let curvedArrow = AnnotationHandle.arrowBend.dragged(textBlock, to: bendPoint)
+check(abs((curvedArrow.resolvedCalloutAppearance.blockArrowBend ?? 0) - 0.6) < 0.001, "bend handle adjusts quadratic shaft")
+check(BlockArrowGeometry(curvedArrow).textOffset.dy > initialBlockGeometry.textOffset.dy,
+      "inline text region follows curve")
+check(curvedArrow.start == textBlock.start && curvedArrow.end == textBlock.end && curvedArrow.pointerTip == textBlock.pointerTip,
+      "bend drag preserves body and tip coordinates")
+var controlDoc = AnnotationDocument()
+let controlSeed = controlDoc.add(.callout, start: curvedArrow.start, end: curvedArrow.end, text: curvedArrow.text)
+controlDoc.update(id: controlSeed.id) { a in
+    a.calloutAppearance = curvedArrow.calloutAppearance
+    a.pointerTip = curvedArrow.pointerTip
+}
+let curveCopy = controlDoc.duplicate(id: controlSeed.id)!
+check(curveCopy.calloutAppearance == curvedArrow.calloutAppearance, "duplicate retains bend and shaft proportions")
+do {
+    let project = EditorProject(doc: controlDoc, layers: [], framed: false)
+    let decoded = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(project))
+    check(decoded == project, "curved arrow and controls survive project round trip")
+    let defaultsData = try JSONEncoder().encode(CalloutAppearance())
+    let legacyAppearance = try JSONDecoder().decode(CalloutAppearance.self, from: defaultsData)
+    check(legacyAppearance.blockArrowBend == nil && legacyAppearance.blockArrowShaftScale == nil,
+          "styles without control fields retain optional defaults")
+} catch { check(false, "block arrow controls round trip: \(error)") }
+
+// MARK: Free-direction arrow geometry and tangent-aligned text
+for target in [CGPoint(x: 450, y: -100), CGPoint(x: -300, y: -80), CGPoint(x: -200, y: 250), CGPoint(x: 430, y: 230)] {
+    var angled = textBlock; angled.pointerTip = target
+    let geometry = BlockArrowGeometry(angled)
+    let desiredX = target.x - geometry.body.midX, desiredY = target.y - geometry.body.midY
+    let distance = hypot(desiredX, desiredY)
+    check(abs(geometry.forward.x - desiredX / distance) < 0.000001 && abs(geometry.forward.y - desiredY / distance) < 0.000001,
+          "arrow points freely instead of choosing a cardinal axis")
+    let endNormal = geometry.normal(1)
+    let alignment = endNormal.x * geometry.headNormal.x + endNormal.y * geometry.headNormal.y
+    check(abs(alignment - 1) < 0.000001, "head follows the final shaft tangent without a right-angle elbow")
+    check(abs(geometry.textAngle) <= .pi / 2, "text remains upright for left-facing arrows")
+    check(abs(geometry.textAngle) > 0.01, "diagonal shaft has diagonal inline text")
+    let middle = geometry.center(0.5)
+    let shifted = CGPoint(x: geometry.body.midX + geometry.textOffset.dx, y: geometry.body.midY + geometry.textOffset.dy)
+    check(hypot(middle.x - shifted.x, middle.y - shifted.y) < 0.000001, "text center stays on curve")
+    check(CalloutGeometry.hit(target, on: angled, tolerance: 5), "freely angled head remains selectable")
+    let bounds = CalloutGeometry.bounds(angled)
+    check(bounds.width.isFinite && bounds.height.isFinite, "offset curve bounds stay finite")
+}
+var automaticText = CalloutAppearance()
+automaticText.shape = .blockArrow
+automaticText.blockArrowAutoTextSize = true
+do {
+    let data = try JSONEncoder().encode(automaticText)
+    check(try JSONDecoder().decode(CalloutAppearance.self, from: data).blockArrowAutoTextSize == true,
+          "automatic text sizing survives styles and projects")
+} catch { check(false, "automatic text style round trip: \(error)") }
 
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

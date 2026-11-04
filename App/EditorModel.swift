@@ -35,9 +35,52 @@ final class EditorModel: ObservableObject {
     @Published var redactStyle: RedactStyle = Preference.value("pref.redactStyle", default: RedactStyle.pixelate) {
         didSet { Preference.set(redactStyle, for: "pref.redactStyle"); restyleSelection() }
     }
+    @Published var calloutAppearance = CalloutAppearancePreferences.load() {
+        didSet {
+            if !isSyncingStyle { CalloutAppearancePreferences.save(calloutAppearance) }
+            restyleSelection()
+        }
+    }
     @Published var stamp = "⭐️"
     @Published var selectedID: Int? { didSet { if selectedID != oldValue { syncStyleFromSelection() } } }
     @Published var editingTextID: Int?
+    private var textOriginal: Annotation?
+    private var textIsNew = false
+    private var textCreationSnapshot: Snapshot?
+    private var textWasDirty = false
+
+    func beginTextEditing(id: Int, isNew: Bool = false) {
+        finishTextEditing()
+        guard let a = doc.items.first(where: { $0.id == id }) else { return }
+        restyledSelectionID = nil
+        textOriginal = a; textIsNew = isNew
+        textWasDirty = hasUnsavedChanges
+        selectedLayerID = nil
+        selectedID = id; editingTextID = id
+    }
+
+    func finishTextEditing(cancel: Bool = false) {
+        guard let original = textOriginal else { return }
+        textOriginal = nil
+        editingTextID = nil
+        guard let current = doc.items.first(where: { $0.id == original.id }) else { return }
+        if textIsNew, let before = textCreationSnapshot {
+            textCreationSnapshot = nil
+            if cancel {
+                doc = before.doc
+                selectedID = nil
+                hasUnsavedChanges = textWasDirty
+            } else { snapshot(before) }
+        } else if cancel {
+            doc.update(id: original.id) { $0 = original }
+            hasUnsavedChanges = textWasDirty
+        } else if current != original {
+            doc.update(id: original.id) { $0 = original }
+            snapshot()
+            doc.update(id: current.id) { $0 = current }
+        }
+    }
+
     @Published var imageLayers: [ImageLayer] = []
     @Published var selectedLayerID: Int?
     private var nextLayerID = 1
@@ -72,8 +115,9 @@ final class EditorModel: ObservableObject {
     /// Each step can hold a full-size image (after crop/resize/background edits), so history is capped.
     private static let undoLimit = 50
 
-    private func snapshot() {
-        undoStack.append(Snapshot(doc: doc, base: base, imageLayers: imageLayers))
+    private func snapshot(_ before: Snapshot? = nil) {
+        finishTextEditing()
+        undoStack.append(before ?? Snapshot(doc: doc, base: base, imageLayers: imageLayers))
         if undoStack.count > Self.undoLimit { undoStack.removeFirst(undoStack.count - Self.undoLimit) }
         redoStack.removeAll()
         undoManager.registerUndo(withTarget: self) { target in MainActor.assumeIsolated { target.undoFromManager() } }
@@ -83,9 +127,22 @@ final class EditorModel: ObservableObject {
 
     /// The panel's current style — used for new annotations and for restyling a selection.
     var currentStyle: AnnotationStyle {
-        AnnotationStyle(colorHex: colorHex, thickness: thickness, filled: filled, opacity: opacity,
+        let styleTool = selectedID.flatMap { id in doc.items.first { $0.id == id }?.tool } ?? tool
+        return AnnotationStyle(colorHex: colorHex, thickness: thickness, filled: filled, opacity: opacity,
                         stepStyle: stepStyle, lineStyle: lineStyle, startHead: startHead,
-                        endHead: endHead, arrowSize: arrowSize, redactStyle: redactStyle)
+                        endHead: endHead, arrowSize: arrowSize, redactStyle: redactStyle, calloutAppearance: styleTool == .callout ? calloutAppearance : nil)
+    }
+
+    func applyCalloutPreset(color: String, appearance: CalloutAppearance) {
+        finishTextEditing()
+        isSyncingStyle = true
+        colorHex = color
+        opacity = 1
+        lineStyle = .solid
+        calloutAppearance = appearance.normalized()
+        isSyncingStyle = false
+        CalloutAppearancePreferences.save(calloutAppearance)
+        restyleSelection()
     }
 
     /// Selecting an annotation loads its style into the panel.
@@ -98,6 +155,7 @@ final class EditorModel: ObservableObject {
         stepStyle = a.stepStyle; lineStyle = a.lineStyle
         startHead = a.startHead; endHead = a.endHead; arrowSize = a.arrowSize
         if let style = a.redactStyle { redactStyle = style }
+        if a.tool == .callout { calloutAppearance = a.resolvedCalloutAppearance }
     }
 
     /// Panel edits apply to the selected annotation, Snagit-style.
@@ -108,19 +166,31 @@ final class EditorModel: ObservableObject {
         guard style.applied(to: a) != a else { return }
         if restyledSelectionID != id { snapshot(); restyledSelectionID = id }
         doc.restyle(id: id, to: style)
+        doc.update(id: id) {
+            if $0.isModernCallout { $0 = CalloutTextLayout.fitted($0) }
+        }
     }
 
     /// Commit a finished drag as a new annotation. Returns its id.
     @discardableResult
     func commit(tool: Tool, start: CGPoint, end: CGPoint) -> Int {
-        snapshot()
+        finishTextEditing()
+        let before = Snapshot(doc: doc, base: base, imageLayers: imageLayers)
+        if tool != .callout { snapshot() }
         let text = (tool == .stamp) ? stamp : ""
         let a = doc.add(tool, start: start, end: end, text: text, colorHex: colorHex,
                         thickness: thickness, filled: filled, opacity: opacity,
                         stepStyle: stepStyle, lineStyle: lineStyle,
                         startHead: startHead, endHead: endHead, arrowSize: arrowSize,
                         redactStyle: redactStyle)
-        if tool == .text || tool == .callout { editingTextID = a.id; selectedID = a.id }
+        if tool == .callout {
+            doc.update(id: a.id) {
+                $0.calloutAppearance = calloutAppearance.normalized()
+                $0 = CalloutTextLayout.fitted(CalloutGeometry.create($0, target: end))
+            }
+            beginTextEditing(id: a.id, isNew: true)
+            textCreationSnapshot = before
+        } else if tool == .text { editingTextID = a.id; selectedID = a.id }
         return a.id
     }
 
@@ -140,7 +210,11 @@ final class EditorModel: ObservableObject {
     }
 
     func updateText(id: Int, _ text: String) {
-        doc.update(id: id) { $0.text = text }
+        hasUnsavedChanges = true
+        doc.update(id: id) {
+            $0.text = text
+            if $0.isModernCallout { $0 = CalloutTextLayout.fitted($0) }
+        }
         objectWillChange.send()
     }
 
@@ -148,11 +222,23 @@ final class EditorModel: ObservableObject {
         doc.translate(id: id, dx: dx, dy: dy)
     }
 
-    func beginTransform() { snapshot() }
+    func beginTransform() { finishTextEditing(); snapshot() }
 
     /// Swap in an edited copy of an annotation (same id), e.g. while dragging a handle.
     func replaceAnnotation(_ annotation: Annotation) {
-        doc.update(id: annotation.id) { $0 = annotation }
+        let fitted = !annotation.isModernCallout ? annotation : CalloutTextLayout.fitted(annotation)
+        doc.update(id: annotation.id) { $0 = fitted }
+        if fitted.resolvedCalloutAppearance.shape == .blockArrow, selectedID == fitted.id {
+            isSyncingStyle = true
+            calloutAppearance = fitted.resolvedCalloutAppearance
+            isSyncingStyle = false
+        }
+    }
+
+    func finishAnnotationTransform() {
+        guard let id = selectedID, let a = doc.items.first(where: { $0.id == id }),
+              a.resolvedCalloutAppearance.shape == .blockArrow else { return }
+        CalloutAppearancePreferences.save(a.resolvedCalloutAppearance)
     }
 
     func extractForSmartMove(start: CGPoint, end: CGPoint) {
@@ -487,8 +573,8 @@ final class EditorModel: ObservableObject {
     }
 
     /// Undo / redo from buttons and menus go through the undo manager so it stays in step.
-    func undo() { if undoManager.canUndo { undoManager.undo() } else { applyUndo() } }
-    func redo() { if undoManager.canRedo { undoManager.redo() } else { applyRedo() } }
+    func undo() { finishTextEditing(); if undoManager.canUndo { undoManager.undo() } else { applyUndo() } }
+    func redo() { finishTextEditing(); if undoManager.canRedo { undoManager.redo() } else { applyRedo() } }
 
     private func undoFromManager() {
         applyUndo()
@@ -545,6 +631,7 @@ final class EditorModel: ObservableObject {
 
     /// Annotations and imported image layers on a transparent canvas — for video overlay.
     func overlayImage() -> CGImage {
+        finishTextEditing()
         guard let context = CGContext(data: nil, width: base.width, height: base.height,
                                       bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpaceCreateDeviceRGB(),
@@ -566,6 +653,7 @@ final class EditorModel: ObservableObject {
 
     /// The image to copy/save — flattened annotations, optionally wrapped in a polished frame.
     func exportImage() -> CGImage {
+        finishTextEditing()
         let flat = flattened()
         let rounded = cornerRadius > 0 ? (ImageOps.roundedCorners(flat, radius: cornerRadius) ?? flat) : flat
         return framed ? ImagePolish.frame(rounded) : rounded

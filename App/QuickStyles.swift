@@ -10,12 +10,31 @@ struct QuickStyle {
     var endHead: ArrowHead = .none
     var stepStyle: StepStyle = .number
     var thickness: Double? = nil
+    var calloutAppearance: CalloutAppearance? = nil
 
     static func presets(for tool: Tool) -> [QuickStyle] {
         let red = "#FF3B30", orange = "#FF9500", yellow = "#FFCC00", green = "#34C759"
         let blue = "#007AFF", purple = "#AF52DE", teal = "#22B8CF", pink = "#FF2D55", white = "#FFFFFF"
 
         switch tool {
+        case .callout:
+            let arrow = CalloutAppearance()
+            var block = arrow; block.shape = .blockArrow; block.alignment = .center; block.fontSize = 32; block.blockArrowAutoTextSize = true
+            var bubble = arrow; bubble.shape = .bubble
+            var amber = bubble; amber.textColorHex = "#172B4D"
+            var outlined = bubble; outlined.textColorHex = "#172B4D"
+            outlined.borderWidth = 2; outlined.borderColorHex = "#172B4D"
+            var label = arrow; label.shape = .roundedLabel
+            return [
+                QuickStyle(color: "#153E75", calloutAppearance: block),
+                QuickStyle(color: red, calloutAppearance: block),
+                QuickStyle(color: "#153E75", calloutAppearance: arrow),
+                QuickStyle(color: red, calloutAppearance: arrow),
+                QuickStyle(color: "#153E75", calloutAppearance: bubble),
+                QuickStyle(color: "#F8C84B", calloutAppearance: amber),
+                QuickStyle(color: "#FFFFFF", calloutAppearance: outlined),
+                QuickStyle(color: "#303846", calloutAppearance: label),
+            ]
         case .arrow, .line:
             return [
                 QuickStyle(color: red, endHead: .arrow),
@@ -75,6 +94,21 @@ struct QuickStylePreview: View {
             let color = Color(nsColor: nsColor(fromHex: style.color))
             let pad: CGFloat = 8
             switch tool {
+            case .callout:
+                let appearance = style.calloutAppearance ?? CalloutAppearance()
+                var a = Annotation(id: 0, tool: .callout,
+                    start: CGPoint(x: 5, y: 6), end: CGPoint(x: max(25, size.width - 14), y: size.height - 8),
+                    colorHex: style.color, pointerTip: CGPoint(x: size.width - 3, y: size.height - 3),
+                    calloutAppearance: appearance)
+                a.calloutAppearance?.cornerRadius = min(5, appearance.cornerRadius)
+                let path = Path(CalloutGeometry.path(a))
+                ctx.fill(path, with: .color(color))
+                if appearance.borderWidth > 0 {
+                    ctx.stroke(path, with: .color(Color(nsColor: nsColor(fromHex: appearance.borderColorHex))), lineWidth: 1)
+                }
+                ctx.draw(Text("Aa").font(.system(size: 11, weight: appearance.bold ? .semibold : .regular))
+                    .foregroundColor(Color(nsColor: nsColor(fromHex: appearance.textColorHex))),
+                    at: CGPoint(x: (a.start.x + a.end.x) / 2, y: size.height / 2))
             case .arrow, .line:
                 let s = CGPoint(x: pad, y: size.height - pad)
                 let e = CGPoint(x: size.width - pad, y: pad)
