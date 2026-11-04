@@ -35,6 +35,14 @@ final class EditorModel: ObservableObject {
     @Published var redactStyle: RedactStyle = Preference.value("pref.redactStyle", default: RedactStyle.pixelate) {
         didSet { Preference.set(redactStyle, for: "pref.redactStyle"); restyleSelection() }
     }
+    @Published var simplifySampleBackground = true
+    @Published var simplifyCornerRadius: Double = 8 { didSet { restyleSelection() } }
+    @Published var stepAppearance = StepAppearancePreferences.load() {
+        didSet {
+            if !isSyncingStyle { StepAppearancePreferences.save(stepAppearance) }
+            restyleSelection()
+        }
+    }
     @Published var calloutAppearance = CalloutAppearancePreferences.load() {
         didSet {
             if !isSyncingStyle { CalloutAppearancePreferences.save(calloutAppearance) }
@@ -130,7 +138,7 @@ final class EditorModel: ObservableObject {
         let styleTool = selectedID.flatMap { id in doc.items.first { $0.id == id }?.tool } ?? tool
         return AnnotationStyle(colorHex: colorHex, thickness: thickness, filled: filled, opacity: opacity,
                         stepStyle: stepStyle, lineStyle: lineStyle, startHead: startHead,
-                        endHead: endHead, arrowSize: arrowSize, redactStyle: redactStyle, calloutAppearance: styleTool == .callout ? calloutAppearance : nil)
+                        endHead: endHead, arrowSize: arrowSize, redactStyle: redactStyle, calloutAppearance: styleTool == .callout ? calloutAppearance : nil, stepAppearance: styleTool == .step ? stepAppearance : nil, simplifyCornerRadius: (selectedID.flatMap { id in doc.items.first { $0.id == id }?.simplifyCornerRadius }) == nil ? nil : simplifyCornerRadius)
     }
 
     func applyCalloutPreset(color: String, appearance: CalloutAppearance) {
@@ -156,6 +164,8 @@ final class EditorModel: ObservableObject {
         startHead = a.startHead; endHead = a.endHead; arrowSize = a.arrowSize
         if let style = a.redactStyle { redactStyle = style }
         if a.tool == .callout { calloutAppearance = a.resolvedCalloutAppearance }
+        if a.tool == .step { stepAppearance = a.resolvedStepAppearance }
+        if let radius = a.simplifyCornerRadius { simplifyCornerRadius = radius }
     }
 
     /// Panel edits apply to the selected annotation, Snagit-style.
@@ -191,6 +201,7 @@ final class EditorModel: ObservableObject {
             beginTextEditing(id: a.id, isNew: true)
             textCreationSnapshot = before
         } else if tool == .text { editingTextID = a.id; selectedID = a.id }
+        else if tool == .step { doc.update(id: a.id) { $0.stepAppearance = stepAppearance.normalized() } }
         return a.id
     }
 
@@ -228,7 +239,7 @@ final class EditorModel: ObservableObject {
     func replaceAnnotation(_ annotation: Annotation) {
         let fitted = !annotation.isModernCallout ? annotation : CalloutTextLayout.fitted(annotation)
         doc.update(id: annotation.id) { $0 = fitted }
-        if fitted.resolvedCalloutAppearance.shape == .blockArrow, selectedID == fitted.id {
+        if fitted.isModernCallout, selectedID == fitted.id {
             isSyncingStyle = true
             calloutAppearance = fitted.resolvedCalloutAppearance
             isSyncingStyle = false
@@ -237,8 +248,31 @@ final class EditorModel: ObservableObject {
 
     func finishAnnotationTransform() {
         guard let id = selectedID, let a = doc.items.first(where: { $0.id == id }),
-              a.resolvedCalloutAppearance.shape == .blockArrow else { return }
+              a.isModernCallout else { return }
         CalloutAppearancePreferences.save(a.resolvedCalloutAppearance)
+    }
+
+    func setStepLabel(_ text: String) {
+        guard let id = selectedID, let a = doc.items.first(where: { $0.id == id }), a.tool == .step, a.text != text else { return }
+        snapshot()
+        doc.update(id: id) { $0.text = String(text.prefix(12)) }
+    }
+
+    func addCalloutTail() {
+        finishTextEditing()
+        guard let id = selectedID, let a = doc.items.first(where: { $0.id == id }),
+              a.tool == .callout, [.arrow, .bubble, .thought].contains(a.resolvedCalloutAppearance.shape),
+              (a.additionalPointerTips?.count ?? 0) < 3 else { return }
+        snapshot()
+        let r = CalloutGeometry.body(a), count = a.additionalPointerTips?.count ?? 0
+        let tips = [CGPoint(x: r.midX, y: r.maxY + 70), CGPoint(x: r.minX - 70, y: r.midY), CGPoint(x: r.midX, y: r.minY - 70)]
+        doc.update(id: id) { $0.additionalPointerTips = ($0.additionalPointerTips ?? []) + [tips[count]] }
+    }
+
+    func removeCalloutTail() {
+        guard let id = selectedID, let a = doc.items.first(where: { $0.id == id }), !(a.additionalPointerTips ?? []).isEmpty else { return }
+        snapshot()
+        doc.update(id: id) { $0.additionalPointerTips?.removeLast() }
     }
 
     func extractForSmartMove(start: CGPoint, end: CGPoint) {
@@ -495,16 +529,32 @@ final class EditorModel: ObservableObject {
         selectedID = annotation.id
     }
 
-    func simplifyImage() {
-        guard let simplified = LocalVisionEdits.simplify(compositeBase()) else {
-            Toast.show("Couldn't simplify this image", symbol: "exclamationmark.triangle.fill"); return
-        }
+    func commitSimplifyBlock(start: CGPoint, end: CGPoint) {
+        let rect = selectionRect(from: start, to: end).intersection(CGRect(origin: .zero, size: pixelSize))
+        guard rect.width >= 8 && rect.height >= 8 else { return }
+        let color = simplifySampleBackground ? SimplifySampling.surroundingColorHex(compositeBase(), region: rect) : colorHex
+        snapshot()
+        let a = doc.add(.rect, start: rect.origin, end: CGPoint(x: rect.maxX, y: rect.maxY),
+            colorHex: color, thickness: thickness, filled: true, opacity: opacity)
+        doc.update(id: a.id) { $0.simplifyCornerRadius = simplifyCornerRadius }
+        selectedID = a.id; selectedLayerID = nil
+    }
+
+    func simplifyPreview() -> CGImage? { LocalVisionEdits.simplify(compositeBase()) }
+
+    func applySimplifyPreview(_ simplified: CGImage, opacity: Double) {
         snapshot()
         let layer = ImageLayer(id: nextLayerID, image: simplified,
-                               rect: CGRect(x: 0, y: 0, width: base.width, height: base.height),
-                               opacity: 1, name: "Simplify")
+            rect: CGRect(x: 0, y: 0, width: base.width, height: base.height), opacity: opacity, name: "Simplify")
         nextLayerID += 1; imageLayers.append(layer)
         selectedID = nil; selectedLayerID = layer.id
+    }
+
+    func simplifyImage() {
+        guard let simplified = simplifyPreview() else {
+            Toast.show("Couldn't simplify this image", symbol: "exclamationmark.triangle.fill"); return
+        }
+        applySimplifyPreview(simplified, opacity: 1)
         Toast.show("Editable Simplify layer added", symbol: "wand.and.stars")
     }
 

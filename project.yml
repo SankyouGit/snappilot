@@ -51,3 +51,32 @@ targets:
         INFOPLIST_KEY_NSRemindersFullAccessUsageDescription: "Add your meeting action items to Apple Reminders."
         INFOPLIST_KEY_NSRemindersUsageDescription: "Add your meeting action items to Apple Reminders."
         ENABLE_HARDENED_RUNTIME: YES
+
+  SnappilotTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Snappilot
+      - package: SnapCore
+        product: SnapCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: ai.snappilot.annotation-tests
+        SWIFT_VERSION: "6.0"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Snappilot.app/Contents/MacOS/Snappilot"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+schemes:
+  Snappilot:
+    build:
+      targets:
+        Snappilot: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - name: SnappilotTests

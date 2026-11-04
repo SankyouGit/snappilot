@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 public enum CalloutShape: String, CaseIterable, Codable, Sendable {
-    case blockArrow, arrow, bubble, roundedLabel, rectangle
+    case blockArrow, arrow, bubble, roundedLabel, rectangle, ellipse, cloud, thought, burst
     public var title: String {
         switch self {
         case .blockArrow: return "Block Arrow (Text)"
@@ -10,11 +10,15 @@ public enum CalloutShape: String, CaseIterable, Codable, Sendable {
         case .bubble: return "Speech Bubble"
         case .roundedLabel: return "Rectangle"
         case .rectangle: return "Rectangle (Legacy)"
+        case .ellipse: return "Oval"
+        case .cloud: return "Cloud"
+        case .thought: return "Thought Bubble"
+        case .burst: return "Burst"
         }
     }
     /// Keep the old square variant decodable, but don't offer a duplicate Rectangle.
-    public static var availableCases: [CalloutShape] { [.blockArrow, .arrow, .bubble, .roundedLabel] }
-    public var hasPointer: Bool { self == .blockArrow || self == .arrow || self == .bubble }
+    public static var availableCases: [CalloutShape] { [.blockArrow, .arrow, .bubble, .roundedLabel, .ellipse, .cloud, .thought, .burst] }
+    public var hasPointer: Bool { self == .blockArrow || self == .arrow || self == .bubble || self == .thought }
 }
 
 public enum CalloutAlignment: String, CaseIterable, Codable, Sendable {
@@ -40,6 +44,8 @@ public struct CalloutAppearance: Equatable, Codable, Sendable {
     public var blockArrowShaftScale: Double?
     public var blockArrowBend: Double?
     public var blockArrowAutoTextSize: Bool?
+    public var rotationDegrees: Double?
+    public var pointerAnchorOffset: Double?
 
     public init() {}
 
@@ -52,6 +58,8 @@ public struct CalloutAppearance: Equatable, Codable, Sendable {
         out.pointerScale = min(2, max(0.5, pointerScale))
         if let scale = blockArrowShaftScale { out.blockArrowShaftScale = min(2, max(0.35, scale)) }
         if let bend = blockArrowBend { out.blockArrowBend = min(1, max(-1, bend)) }
+        if let rotation = rotationDegrees { out.rotationDegrees = rotation.truncatingRemainder(dividingBy: 360) }
+        if let offset = pointerAnchorOffset { out.pointerAnchorOffset = min(0.95, max(0.05, offset)) }
         return out
     }
 }

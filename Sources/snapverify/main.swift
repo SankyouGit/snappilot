@@ -911,7 +911,7 @@ for shape in CalloutShape.allCases {
     }
     let shapeAnnotation = shapes.items[0]
     check(CalloutGeometry.path(shapeAnnotation).contains(CGPoint(x: 150, y: 80)), "each callout shape contains its text body")
-    check(AnnotationHandle.handles(for: shapeAnnotation).count == (shape == .blockArrow ? 8 : (shape.hasPointer ? 5 : 4)), "only shapes with tails expose pointer handle")
+    check(AnnotationHandle.handles(for: shapeAnnotation).count == (shape == .blockArrow ? 9 : (shape.hasPointer ? 6 : 5)), "only shapes with tails expose pointer handle")
     if !shape.hasPointer {
         check(!CalloutGeometry.hit(CGPoint(x: 340, y: 80), on: shapeAnnotation, tolerance: 3), "hidden tail cannot be selected")
     }
@@ -1062,6 +1062,81 @@ do {
     check(try JSONDecoder().decode(CalloutAppearance.self, from: data).blockArrowAutoTextSize == true,
           "automatic text sizing survives styles and projects")
 } catch { check(false, "automatic text style round trip: \(error)") }
+
+// MARK: Shape library, whole-object rotation and multiple targets
+for shape in [CalloutShape.ellipse, .cloud, .thought, .burst] {
+    var appearance = CalloutAppearance(); appearance.shape = shape
+    let a = Annotation(id: 200, tool: .callout, start: CGPoint(x: 50, y: 60), end: CGPoint(x: 290, y: 200),
+        text: "Wrapped label", pointerTip: CGPoint(x: 380, y: 170), calloutAppearance: appearance)
+    let core = CalloutGeometry.textBody(a), path = CalloutGeometry.path(a)
+    for point in [CGPoint(x: core.minX + 1, y: core.minY + 1), CGPoint(x: core.maxX - 1, y: core.maxY - 1)] {
+        check(path.contains(point), "shape-specific text rectangle lies inside its outline")
+    }
+    check(path.boundingBoxOfPath.width.isFinite, "new shape has finite geometry")
+    let rotated = AnnotationHandle.rotation.dragged(a, to: CGPoint(x: 400, y: 130))
+    check(abs(rotated.resolvedCalloutAppearance.rotationDegrees ?? 0) > 1, "rotation handle changes whole-object rotation")
+    let p = CGPoint(x: 135, y: 100)
+    let roundTrip = CalloutGeometry.rotate(CalloutGeometry.rotate(p, on: rotated), on: rotated, inverse: true)
+    check(hypot(roundTrip.x - p.x, roundTrip.y - p.y) < 0.00001, "rotation round trip preserves document coordinates")
+}
+var multiStyle = CalloutAppearance(); multiStyle.shape = .bubble; multiStyle.rotationDegrees = 35
+var multi = Annotation(id: 300, tool: .callout, start: CGPoint(x: 100, y: 100), end: CGPoint(x: 320, y: 200),
+    pointerTip: CGPoint(x: 400, y: 150), calloutAppearance: multiStyle,
+    additionalPointerTips: [CGPoint(x: 200, y: 300), CGPoint(x: 30, y: 120)])
+check(AnnotationHandle.handles(for: multi).filter { if case .additionalPointer = $0.0 { return true }; return false }.count == 2,
+      "each additional tail is independently manipulable")
+let movedExtra = AnnotationHandle.additionalPointer(0).dragged(multi, to: CGPoint(x: 450, y: 350))
+let worldExtra = CalloutGeometry.rotate(movedExtra.additionalPointerTips![0], on: movedExtra)
+check(hypot(worldExtra.x - 450, worldExtra.y - 350) < 0.0001, "extra-tail drag respects object rotation")
+let oldWorldTip = CalloutGeometry.rotate(multi.pointerTip!, on: multi)
+let resizedMulti = AnnotationHandle.bottomRight.dragged(multi, to: CGPoint(x: 380, y: 300))
+let newWorldTip = CalloutGeometry.rotate(resizedMulti.pointerTip!, on: resizedMulti)
+check(hypot(oldWorldTip.x - newWorldTip.x, oldWorldTip.y - newWorldTip.y) < 0.0001, "rotated body resize does not move pointer target")
+multi.translate(dx: 10, dy: 20)
+check(multi.additionalPointerTips![0] == CGPoint(x: 210, y: 320), "whole-object move includes additional targets")
+
+// MARK: Step shapes retain sequencing and project/style compatibility
+var markers = AnnotationDocument()
+for _ in 0..<12 { markers.add(.step, start: CGPoint(x: 100, y: 100), end: .zero) }
+check(markers.items[9].stepLabel == "10" && markers.items[11].stepLabel == "12", "multi-digit marker sequence remains intact")
+markers.remove(id: markers.items[0].id)
+check(markers.items.first?.stepNumber == 2, "deleting marker does not renumber remaining steps")
+var expectedCopiedStep = 13
+for shape in StepShape.allCases {
+    var appearance = StepAppearance(); appearance.shape = shape
+    markers.update(id: markers.items[0].id) { $0.stepAppearance = appearance }
+    let marker = markers.items[0]
+    check(StepGeometry.path(marker).contains(marker.start), "each step shape contains its sequence label")
+    check(AnnotationHandle.handles(for: marker).count == (shape == .pin ? 1 : 0), "only pin markers expose a target handle")
+    let clone = markers.duplicate(id: marker.id)!
+    check(clone.stepNumber == expectedCopiedStep && clone.stepAppearance == appearance, "marker copy keeps shape and advances sequence")
+    expectedCopiedStep += 1
+    markers.remove(id: clone.id)
+    var style = AnnotationStyle(of: marker); style.colorHex = "#123456"
+    markers.restyle(id: marker.id, to: style)
+    check(markers.items[0].stepNumber == 2, "marker restyling preserves sequence identity")
+}
+markers.update(id: markers.items[0].id) { $0.text = "Start" }
+check(markers.items[0].stepLabel == "Start" && markers.items[0].stepNumber == 2, "manual marker label preserves stored sequence number")
+check(StepStyle.upper.label(for: 27) == "AA", "alphabetic markers continue beyond Z")
+if let solid = renderSolid(width: 80, height: 60) {
+    let sampled = SimplifySampling.surroundingColorHex(solid, region: CGRect(x: 20, y: 20, width: 20, height: 20))
+    check(sampled.hasPrefix("#") && sampled.count == 7, "Simplify background sample returns a stored RGB color")
+}
+var extendedDoc = AnnotationDocument()
+let extended = extendedDoc.add(.callout, start: multi.start, end: multi.end, text: "Two targets")
+extendedDoc.update(id: extended.id) { $0.calloutAppearance = multi.calloutAppearance; $0.pointerTip = multi.pointerTip; $0.additionalPointerTips = multi.additionalPointerTips }
+let regionBlock = extendedDoc.add(.rect, start: CGPoint(x: 10, y: 10), end: CGPoint(x: 100, y: 60), filled: true)
+extendedDoc.update(id: regionBlock.id) { $0.simplifyCornerRadius = 8 }
+do {
+    let project = EditorProject(doc: extendedDoc, layers: [], framed: false)
+    let decoded = try JSONDecoder().decode(EditorProject.self, from: JSONEncoder().encode(project))
+    check(decoded == project && decoded.doc.items[0].additionalPointerTips?.count == 2, "multiple tails and editable Simplify blocks round trip")
+    let defaults = UserDefaults(suiteName: "step-test-\(UUID().uuidString)")!
+    StepAppearancePreferences.save(StepAppearance(), in: defaults)
+    check(defaults.data(forKey: "pref.stepAppearance") != nil, "step preferences use supported Data storage")
+    defaults.removeObject(forKey: "pref.stepAppearance")
+} catch { check(false, "expanded annotations round trip: \(error)") }
 
 print(failures == 0 ? "ALL PASS" : "\(failures) FAILED")
 exit(failures == 0 ? 0 : 1)

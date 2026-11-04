@@ -89,6 +89,8 @@ struct SnappilotApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Hosted annotation tests must not register global hotkeys or show permission/welcome dialogs.
+        if NSClassFromString("XCTestCase") != nil { return }
         NSApp.setActivationPolicy(.regular)   // show in the Dock like a normal app
         AppState.shared.applyAppearance()
         AppState.shared.library.cleanupTempFiles()

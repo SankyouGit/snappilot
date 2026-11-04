@@ -82,6 +82,8 @@ extension EditorModel {
         stepStyle = style.stepStyle; lineStyle = style.lineStyle
         startHead = style.startHead; endHead = style.endHead; arrowSize = style.arrowSize
         if let appearance = style.calloutAppearance { calloutAppearance = appearance }
+        if let appearance = style.stepAppearance { stepAppearance = appearance }
+        if let radius = style.simplifyCornerRadius { simplifyCornerRadius = radius }
     }
 
     func count(of tool: Tool) -> Int { doc.items.filter { $0.tool == tool }.count }

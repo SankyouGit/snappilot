@@ -41,15 +41,15 @@ enum CalloutTextLayout {
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: attributes(a)).height)
     }
     static func rotation(_ a: Annotation) -> CGFloat {
-        a.resolvedCalloutAppearance.shape == .blockArrow ? BlockArrowGeometry(a).textAngle : 0
+        (a.resolvedCalloutAppearance.shape == .blockArrow ? BlockArrowGeometry(a).textAngle : 0) + CalloutGeometry.rotation(a)
     }
     static func availableTextWidth(_ a: Annotation) -> CGFloat {
-        let width = a.resolvedCalloutAppearance.shape == .blockArrow ? BlockArrowGeometry(a).labelWidth : CalloutGeometry.body(a).width
+        let width = a.resolvedCalloutAppearance.shape == .blockArrow ? BlockArrowGeometry(a).labelWidth : CalloutGeometry.textBody(a).width
         return max(20, width - textInset(a) * 2)
     }
     static func textRect(_ a: Annotation) -> CGRect {
         let padding = textInset(a)
-        var rect = CalloutGeometry.body(a).insetBy(dx: padding, dy: padding)
+        var rect = CalloutGeometry.textBody(a).insetBy(dx: padding, dy: padding)
         if a.resolvedCalloutAppearance.shape == .blockArrow {
             let geometry = BlockArrowGeometry(a)
             let shift = geometry.textOffset
@@ -61,6 +61,8 @@ enum CalloutTextLayout {
             rect.origin.y += (rect.height - height) / 2
             rect.size.height = height
         }
+        let center = CalloutGeometry.rotate(CGPoint(x: rect.midX, y: rect.midY), on: a)
+        rect.origin = CGPoint(x: center.x - rect.width / 2, y: center.y - rect.height / 2)
         return rect
     }
     static func fitted(_ a: Annotation) -> Annotation {
@@ -87,14 +89,21 @@ enum CalloutTextLayout {
         out.start = r.origin
         let block = a.resolvedCalloutAppearance.shape == .blockArrow
         let height = block ? measuredHeight(a, width: width) : ceil(measured.height)
-        out.end = CGPoint(x: r.minX + max(80 + padding * 2, r.width),
-                          y: r.minY + max(r.height, height + padding * 2))
+        let core = CalloutGeometry.textBody(a)
+        let xRatio = max(0.1, core.width / max(1, r.width)), yRatio = max(0.1, core.height / max(1, r.height))
+        out.end = CGPoint(x: r.minX + max((80 + padding * 2) / xRatio, r.width),
+                          y: r.minY + max(r.height, (height + padding * 2) / yRatio))
         if block {
             var style = out.resolvedCalloutAppearance
             let geometry = BlockArrowGeometry(out)
             let minimum = geometry.minimumShaftScale(textWidth: width, textHeight: height, padding: padding)
             style.blockArrowShaftScale = max(style.blockArrowShaftScale ?? 1, minimum)
             out.calloutAppearance = style.normalized()
+        }
+        if CalloutGeometry.rotation(a) != 0 {
+            let targetFrame = out
+            out.pointerTip = a.pointerTip.map { CalloutGeometry.rotate(CalloutGeometry.rotate($0, on: a), on: targetFrame, inverse: true) }
+            out.additionalPointerTips = a.additionalPointerTips?.map { CalloutGeometry.rotate(CalloutGeometry.rotate($0, on: a), on: targetFrame, inverse: true) }
         }
         return out
     }

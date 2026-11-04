@@ -4,7 +4,7 @@ import SnapCore
 import UniformTypeIdentifiers
 
 /// Draw vs. move/select.
-enum EditorMode { case draw, select }
+enum EditorMode { case draw, select, simplify }
 private enum LayerResizeHandle { case topLeft, topRight, bottomLeft, bottomRight }
 
 struct EditorView: View {
@@ -17,6 +17,8 @@ struct EditorView: View {
     @State private var zoom: CGFloat = 1
     @State private var pan: CGSize = .zero
     @State private var freehandPoints: [CGPoint] = []
+    @State private var showSimplifyPreview = false
+    @State private var simplifiedPreview: CGImage?
     @State private var showResize = false
     @State private var resizeWidth = ""
     @State private var resizeHeight = ""
@@ -119,6 +121,13 @@ struct EditorView: View {
             return .handled
         }
         .onDeleteCommand { model.deleteSelected() }
+        .sheet(isPresented: $showSimplifyPreview) {
+            if let image = simplifiedPreview {
+                SimplifyPreview(original: model.compositeBase(), simplified: image,
+                    onCancel: { showSimplifyPreview = false },
+                    onApply: { opacity in model.applySimplifyPreview(image, opacity: opacity); showSimplifyPreview = false })
+            }
+        }
         .sheet(isPresented: $showResize) { resizeSheet }
         .sheet(isPresented: $showOCRTextEditor) { ocrTextSheet }
         .onReceive(NotificationCenter.default.publisher(for: .snappilotSelectTool)) { note in
@@ -193,14 +202,18 @@ struct EditorView: View {
                     .disabled(!model.canRedo).help("Redo")
             }.buttonStyle(.borderless)
             Divider().frame(height: 24)
-            Text(mode == .select ? "Select" : tools.first(where: { $0.0 == model.tool })?.2 ?? "Annotate")
+            Text(mode == .simplify ? "Simplify Region" : mode == .select ? "Select" : tools.first(where: { $0.0 == model.tool })?.2 ?? "Annotate")
                 .font(.system(size: 13, weight: .semibold))
             Spacer()
             Button { chooseOverlayImage() } label: { Label("Add Image", systemImage: "photo.badge.plus") }
                 .help("Add a screenshot, logo, or image as a movable overlay")
             Menu {
                 Button("Edit Recognized Text…", systemImage: "character.cursor.ibeam") { scanEditableText() }
-                Button("Simplify Image", systemImage: "wand.and.stars") { model.simplifyImage() }
+                Button("Simplify Region", systemImage: "rectangle.dashed") { model.finishTextEditing(); model.selectedID = nil; mode = .simplify }
+                Button("Simplify Full Image…", systemImage: "wand.and.stars") {
+                    simplifiedPreview = model.simplifyPreview()
+                    showSimplifyPreview = simplifiedPreview != nil
+                }
                 Button("Remove Background", systemImage: "person.crop.rectangle") { model.removeBackground() }
                 Button("Blur Background", systemImage: "camera.filters") { model.blurBackground() }
             } label: { Label("Smart", systemImage: "sparkles") }
@@ -323,6 +336,11 @@ struct EditorView: View {
                                            filled: model.filled, opacity: model.opacity,
                                            stepStyle: model.stepStyle, lineStyle: model.lineStyle,
                                            redactStyle: d.tool == .blur ? model.redactStyle : nil)
+                        if mode == .simplify {
+                            a.filled = true; a.simplifyCornerRadius = model.simplifyCornerRadius
+                            a.colorHex = model.simplifySampleBackground
+                                ? SimplifySampling.surroundingColorHex(model.base, region: selectionRect(from: d.start, to: d.end)) : model.colorHex
+                        }
                         if d.tool == .callout {
                             a.calloutAppearance = model.calloutAppearance
                             a = CalloutTextLayout.fitted(CalloutGeometry.create(a, target: d.end))
@@ -407,7 +425,7 @@ struct EditorView: View {
         model.selectedID.flatMap { id in model.doc.items.first { $0.id == id } }
     }
     /// The panel edits the selected annotation when there is one, otherwise the active tool.
-    private var panelTool: Tool { selectedAnnotation?.tool ?? model.tool }
+    private var panelTool: Tool { mode == .simplify ? .rect : (selectedAnnotation?.tool ?? model.tool) }
     private func toolTitle(_ tool: Tool) -> String { tools.first { $0.0 == tool }?.2 ?? "Object" }
 
     @ViewBuilder private var quickStylesSection: some View {
@@ -440,7 +458,7 @@ struct EditorView: View {
         }
         return model.colorHex == s.color && model.lineStyle == s.lineStyle && model.filled == s.filled
             && model.startHead == s.startHead && model.endHead == s.endHead
-            && (panelTool != .step || model.stepStyle == s.stepStyle)
+            && (panelTool != .step || (model.stepStyle == s.stepStyle && (s.stepAppearance == nil || s.stepAppearance == model.stepAppearance)))
     }
 
     private func apply(_ s: QuickStyle) {
@@ -448,6 +466,7 @@ struct EditorView: View {
             model.applyCalloutPreset(color: s.color, appearance: appearance)
             return
         }
+        if let appearance = s.stepAppearance { model.stepAppearance = appearance }
         model.colorHex = s.color
         model.lineStyle = s.lineStyle
         model.filled = s.filled
@@ -529,7 +548,18 @@ struct EditorView: View {
                     MyStylesSection(model: model, tool: panelTool, selected: selectedAnnotation)
                 }
                 if panelTool == .callout { CalloutProperties(model: model) }
+                if mode == .simplify || selectedAnnotation?.simplifyCornerRadius != nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("SIMPLIFY REGION").font(.caption2.weight(.bold))
+                        Toggle("Sample surrounding background", isOn: $model.simplifySampleBackground)
+                        Text("Corner radius").font(.caption)
+                        Slider(value: $model.simplifyCornerRadius, in: 0...40)
+                        Text("Drag over visual clutter to place an editable block. Use Redact to conceal sensitive content.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
                 stepStyleControl
+                if panelTool == .step { StepProperties(model: model).id(model.selectedID) }
                 stampControl
                 Divider()
                 Text(selectedAnnotation.map { "Selected \(toolTitle($0.tool))" } ?? "Tool Properties").font(.headline)
@@ -565,7 +595,7 @@ struct EditorView: View {
                     }
                 }
 
-                if panelTool != .callout {
+                if panelTool != .callout && panelTool != .step {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack { Text("Thickness").font(.caption); Spacer(); Text("\(Int(model.thickness))").font(.caption).foregroundStyle(.secondary) }
                         Slider(value: $model.thickness, in: 1...24)
@@ -657,6 +687,7 @@ struct EditorView: View {
                 model.finishTextEditing()
                 let start = toImage(value.startLocation, fit: fit)
                 let cur = toImage(value.location, fit: fit)
+                if mode == .simplify { draft = (.rect, start, cur); return }
                 // A drag that starts on the selected annotation's handle resizes it in any mode.
                 if mode == .draw, draft == nil, freehandPoints.isEmpty,
                    handleAnnotationResize(start: start, current: cur, fit: fit) { return }
@@ -674,6 +705,7 @@ struct EditorView: View {
             .onEnded { value in
                 let start = toImage(value.startLocation, fit: fit)
                 let end = toImage(value.location, fit: fit)
+                if mode == .simplify { draft = nil; model.commitSimplifyBlock(start: start, end: end); return }
                 if mode == .draw, activeAnnotationHandle != nil {
                     model.finishAnnotationTransform()
                     activeAnnotationHandle = nil; annotationDragOriginal = nil
@@ -829,6 +861,7 @@ struct EditorView: View {
     }
     private func boundingRect(_ a: Annotation) -> CGRect {
         if a.isModernCallout { return CalloutGeometry.bounds(a) }
+        if a.tool == .step && a.stepAppearance != nil { return StepGeometry.bounds(a) }
         if a.tool == .step || a.tool == .text || a.tool == .stamp {
             let s = max(28, a.thickness * 6)
             return CGRect(x: a.start.x - s, y: a.start.y - s, width: s * 2, height: s * 2)
@@ -1048,6 +1081,10 @@ struct EditorView: View {
             drawLiveHead(a.startHead, at: s, from: e, width: lw, sizeScale: sz, color: color, in: ctx)
             drawLiveHead(a.endHead, at: e, from: s, width: lw, sizeScale: sz, color: color, in: ctx)
         case .rect:
+            if let radius = a.simplifyCornerRadius {
+                ctx.fill(Path(roundedRect: rect, cornerRadius: CGFloat(radius) * fit.scale), with: .color(color))
+                return
+            }
             if a.filled { ctx.fill(Path(rect), with: .color(color)) }
             else { ctx.stroke(Path(rect), with: .color(color), style: stroke) }
         case .ellipse:
@@ -1090,6 +1127,14 @@ struct EditorView: View {
                         .foregroundColor(color),
                      at: s, anchor: .topLeading)
         case .step:
+            if a.stepAppearance != nil {
+                ctx.withCGContext { context in
+                    context.translateBy(x: fit.offset.x, y: fit.offset.y)
+                    context.scaleBy(x: fit.scale, y: fit.scale)
+                    StepRenderer.draw(a, in: context)
+                }
+                return
+            }
             let radius = max(14, a.thickness * 5) * fit.scale
             let r = CGRect(x: s.x - radius, y: s.y - radius, width: radius * 2, height: radius * 2)
             ctx.fill(Path(ellipseIn: r), with: .color(color))
@@ -1147,7 +1192,15 @@ struct EditorView: View {
         let r = !a.isModernCallout ? boundingRect(a) : CalloutGeometry.body(a)
         let v = CGRect(x: r.minX * fit.scale + fit.offset.x, y: r.minY * fit.scale + fit.offset.y,
                        width: r.width * fit.scale, height: r.height * fit.scale).insetBy(dx: -4, dy: -4)
-        if a.resolvedCalloutAppearance.shape != .blockArrow || !a.isModernCallout {
+        if a.isModernCallout && a.resolvedCalloutAppearance.shape != .blockArrow {
+            let body = CalloutGeometry.body(a)
+            let corners = [CGPoint(x: body.minX, y: body.minY), CGPoint(x: body.maxX, y: body.minY),
+                           CGPoint(x: body.maxX, y: body.maxY), CGPoint(x: body.minX, y: body.maxY)]
+            var outline = Path()
+            outline.addLines(corners.map { toView(CalloutGeometry.rotate($0, on: a), fit: fit) })
+            outline.closeSubpath()
+            ctx.stroke(outline, with: .color(.accentColor), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+        } else if !a.isModernCallout {
             ctx.stroke(Path(roundedRect: v, cornerRadius: 4), with: .color(.accentColor),
                        style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
         }
@@ -1156,8 +1209,9 @@ struct EditorView: View {
             let knob = CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)
             let controlColor: Color
             switch handle {
-            case .pointerTip, .shaftWidth, .arrowheadSize: controlColor = a.isModernCallout ? .yellow : .white
+            case .pointerTip, .additionalPointer, .shaftWidth, .arrowheadSize: controlColor = a.isModernCallout ? .yellow : .white
             case .arrowBend: controlColor = .cyan
+            case .rotation: controlColor = .green
             default: controlColor = .white
             }
             ctx.fill(Path(ellipseIn: knob), with: .color(controlColor))

@@ -20,7 +20,7 @@ public struct EditorProject: Codable, Equatable, Sendable {
         var fileName: String { "layer-\(id).png" }
     }
 
-    public static let currentVersion = 6
+    public static let currentVersion = 7
     public var version: Int
     public var doc: AnnotationDocument
     public var layers: [Layer]

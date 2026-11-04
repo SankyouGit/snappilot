@@ -4,12 +4,30 @@ import CoreGraphics
 public enum CalloutGeometry {
     public static let padding: CGFloat = 12
     public static func body(_ a: Annotation) -> CGRect { selectionRect(from: a.start, to: a.end) }
+    public static func rotation(_ a: Annotation) -> CGFloat {
+        CGFloat(a.resolvedCalloutAppearance.rotationDegrees ?? 0) * .pi / 180
+    }
+    public static func rotate(_ point: CGPoint, on a: Annotation, inverse: Bool = false) -> CGPoint {
+        let r = body(a), angle = rotation(a) * (inverse ? -1 : 1)
+        let x = point.x - r.midX, y = point.y - r.midY
+        return CGPoint(x: r.midX + x * cos(angle) - y * sin(angle), y: r.midY + x * sin(angle) + y * cos(angle))
+    }
+    public static func textBody(_ a: Annotation) -> CGRect {
+        let r = body(a)
+        switch a.resolvedCalloutAppearance.shape {
+        case .ellipse: return r.insetBy(dx: r.width * 0.15, dy: r.height * 0.15)
+        case .cloud, .thought: return r.insetBy(dx: r.width * 0.20, dy: r.height * 0.25)
+        case .burst: return r.insetBy(dx: r.width * 0.25, dy: r.height * 0.25)
+        default: return r
+        }
+    }
     public static func bounds(_ a: Annotation) -> CGRect {
         guard a.isModernCallout else { return body(a) }
         let style = a.resolvedCalloutAppearance
         var result = path(a).boundingBoxOfPath.union(body(a))
         if style.shape.hasPointer, let tip = a.pointerTip {
-            result = result.union(CGRect(x: tip.x - 1, y: tip.y - 1, width: 2, height: 2))
+            let p = rotate(tip, on: a)
+            result = result.union(CGRect(x: p.x - 1, y: p.y - 1, width: 2, height: 2))
         }
         let overflow = CGFloat(style.borderWidth / 2 + (style.shadow ? 15 : 0))
         return result.insetBy(dx: -overflow, dy: -overflow)
@@ -31,8 +49,27 @@ public enum CalloutGeometry {
     /// A rounded text body with a slim, direction-aligned shaft and crisp arrowhead.
     /// Keeping text horizontal preserves native editing when the target changes direction.
     public static func path(_ a: Annotation) -> CGPath {
+        var result = primaryPath(a)
+        if a.resolvedCalloutAppearance.shape.hasPointer && a.resolvedCalloutAppearance.shape != .blockArrow {
+            for tip in a.additionalPointerTips ?? [] {
+                var extra = a; extra.pointerTip = tip
+                result = result.union(primaryPath(extra))
+            }
+        }
+        let r = body(a), angle = rotation(a)
+        if angle != 0 {
+            var transform = CGAffineTransform(translationX: r.midX, y: r.midY)
+                .rotated(by: angle).translatedBy(x: -r.midX, y: -r.midY)
+            result = result.copy(using: &transform) ?? result
+        }
+        return result
+    }
+    private static func primaryPath(_ a: Annotation) -> CGPath {
         let r = body(a), p = CGMutablePath()
         let appearance = a.resolvedCalloutAppearance
+        if [.ellipse, .cloud, .thought, .burst].contains(appearance.shape) {
+            return CalloutBodyShapes.path(a)
+        }
         if !appearance.shape.hasPointer || a.pointerTip == nil {
             let radius: CGFloat = appearance.shape == .rectangle ? 0 : CGFloat(appearance.cornerRadius)
             return CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
@@ -61,7 +98,7 @@ public enum CalloutGeometry {
                 let intersection = CGPoint(x: r.midX + dx * ratio, y: r.midY + dy * ratio)
                 let corner = min(CGFloat(appearance.cornerRadius), edgeLength / 4)
                 let margin = min(edgeLength / 2, corner + nominalHalf * 2)
-                let projected = (intersection.x - v.x) * ux + (intersection.y - v.y) * uy
+                let projected = appearance.pointerAnchorOffset.map { CGFloat($0) * edgeLength } ?? ((intersection.x - v.x) * ux + (intersection.y - v.y) * uy)
                 let offset = min(edgeLength - margin, max(margin, projected))
                 let anchor = CGPoint(x: v.x + ux * offset, y: v.y + uy * offset)
                 let distance = hypot(tip.x - anchor.x, tip.y - anchor.y)

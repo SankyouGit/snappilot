@@ -74,7 +74,7 @@ struct CalloutProperties: View {
                 }
             }
             slider("Padding", value: $model.calloutAppearance.padding, range: 4...40)
-            if model.calloutAppearance.shape != .rectangle && model.calloutAppearance.shape != .blockArrow {
+            if [.arrow, .bubble, .roundedLabel].contains(model.calloutAppearance.shape) {
                 slider("Corner radius", value: $model.calloutAppearance.cornerRadius, range: 0...40)
             }
             if model.calloutAppearance.shape.hasPointer {
@@ -82,6 +82,38 @@ struct CalloutProperties: View {
             }
             if model.calloutAppearance.shape == .blockArrow {
                 Text("Drag yellow handles for thickness and head size. Drag the blue handle to bend.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Rotation")
+                Slider(value: Binding(
+                    get: { model.calloutAppearance.rotationDegrees ?? 0 },
+                    set: { value in
+                        var appearance = model.calloutAppearance
+                        appearance.rotationDegrees = value
+                        model.calloutAppearance = appearance
+                    }), in: -180...180).accessibilityLabel("Callout rotation")
+            }
+            if [.arrow, .bubble].contains(model.calloutAppearance.shape) {
+                Toggle("Automatic tail attachment", isOn: Binding(
+                    get: { model.calloutAppearance.pointerAnchorOffset == nil },
+                    set: { automatic in
+                        var appearance = model.calloutAppearance
+                        appearance.pointerAnchorOffset = automatic ? nil : 0.5
+                        model.calloutAppearance = appearance
+                    }))
+                if model.calloutAppearance.pointerAnchorOffset != nil {
+                    Slider(value: Binding(get: { model.calloutAppearance.pointerAnchorOffset ?? 0.5 },
+                        set: { model.calloutAppearance.pointerAnchorOffset = $0 }), in: 0.05...0.95)
+                        .accessibilityLabel("Tail attachment along edge")
+                }
+            }
+            if [.arrow, .bubble, .thought].contains(model.calloutAppearance.shape) {
+                HStack {
+                    Button("Add Tail") { model.addCalloutTail() }
+                    Button("Remove Tail") { model.removeCalloutTail() }
+                }.disabled(model.selectedID == nil)
+                Text("Drag yellow endpoints independently. Green handle rotates the object.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             Toggle("Shadow", isOn: $model.calloutAppearance.shadow)
